@@ -1,11 +1,13 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import AppNavBar from '../components/AppNavBar.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
+
+const logoutConfirmOpen = ref(false)
 
 const avatarLetter = computed(() => {
   const raw = auth.user?.display_name || auth.user?.username || '?'
@@ -27,17 +29,35 @@ function goOrgs() {
   router.push({ name: 'orgs' })
 }
 
-function logout() {
+function openLogoutConfirm() {
+  logoutConfirmOpen.value = true
+}
+
+function closeLogoutConfirm() {
+  logoutConfirmOpen.value = false
+}
+
+function confirmLogout() {
+  closeLogoutConfirm()
   auth.logout()
   router.replace({ name: 'login' })
 }
+
+watch(logoutConfirmOpen, (open) => {
+  if (typeof document === 'undefined') return
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') document.body.style.overflow = ''
+})
 </script>
 
 <template>
   <div class="page page--home">
     <AppNavBar title="首页" :show-back="false">
       <template #right>
-        <button type="button" class="nav-bar__action" @click="logout">退出</button>
+        <button type="button" class="nav-bar__action" @click="openLogoutConfirm">退出</button>
       </template>
     </AppNavBar>
 
@@ -86,5 +106,62 @@ function logout() {
         </div>
       </section>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="logoutConfirmOpen"
+        class="logout-dialog-backdrop"
+        role="presentation"
+        @click.self="closeLogoutConfirm"
+      >
+        <div
+          class="logout-dialog card card-pad stack"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="logout-dialog-title"
+          @click.stop
+        >
+          <p id="logout-dialog-title" class="list-cell__title u-mb-0">确认退出登录？</p>
+          <p class="muted u-mt-2 u-mb-0">退出后需要重新登录才能使用发起活动、参与签到等功能。</p>
+          <div class="logout-dialog__actions">
+            <button type="button" class="btn btn-secondary" @click="closeLogoutConfirm">取消</button>
+            <button type="button" class="btn btn-danger" @click="confirmLogout">退出登录</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.logout-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  padding-top: max(var(--space-4), var(--safe-top));
+  padding-bottom: max(var(--space-4), var(--safe-bottom));
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+
+.logout-dialog {
+  width: min(100%, 320px);
+  box-shadow: var(--shadow-modal, 0 12px 40px rgba(0, 0, 0, 0.14));
+}
+
+.logout-dialog__actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.logout-dialog__actions .btn {
+  flex: 1;
+  min-height: 44px;
+}
+</style>
