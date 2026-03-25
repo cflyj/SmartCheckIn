@@ -289,6 +289,15 @@ a:focus-visible {
   flex-shrink: 0;
 }
 
+/* 手机/窄屏：顶栏用实底、去掉毛玻璃，避免滚动内容在栏下被模糊透出 */
+@media (max-width: 768px) {
+  .nav-bar {
+    background: var(--ios-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 .headline {
   font-size: 34px;
   font-weight: 700;
@@ -1497,6 +1506,14 @@ button.list-cell--home-tile:active {
   border-bottom-color: var(--disp-nav-border);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+@media (max-width: 768px) {
+  .theme-display .nav-bar {
+    background: var(--disp-bg-0);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 .theme-display .nav-bar__title {
