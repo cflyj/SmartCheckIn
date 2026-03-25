@@ -86,13 +86,13 @@ function open(id) {
   <div class="page">
     <AppNavBar title="活动" @back="router.push({ name: 'home' })" />
 
-    <div class="content">
-      <div class="card card-pad" style="margin-bottom: 20px">
-        <p class="list-cell__title" style="margin-bottom: 8px">用邀请码加入活动</p>
-        <p class="muted" style="margin-top: 0; font-size: 14px; line-height: 1.45">
+    <div class="content stack stack--md stack--airy">
+      <div class="card card-pad stack">
+        <p class="list-cell__title u-mb-2">用邀请码加入活动</p>
+        <p class="muted text-body-xs u-mt-0">
           向组织者索取<strong>活动编号</strong>（或含编号的<strong>分享链接</strong>）以及<strong>活动邀请码</strong>。此处填写的是创建活动时设置的口令，与注册账号用的「组织者邀请码」无关。
         </p>
-        <div v-if="quickJoinErr" class="banner-error" style="margin-top: 12px">{{ quickJoinErr }}</div>
+        <div v-if="quickJoinErr" class="banner-error">{{ quickJoinErr }}</div>
         <div class="field">
           <label>活动编号或分享链接</label>
           <input
@@ -117,10 +117,14 @@ function open(id) {
       </div>
 
       <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-if="loading" class="spinner-wrap muted">加载中…</div>
+
+      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true" />
+        <span>加载中…</span>
+      </div>
 
       <template v-else-if="sessions.length">
-        <p class="muted" style="font-size: 13px; margin-bottom: 10px; line-height: 1.4">
+        <p class="text-caption u-mb-2">
           已成功签到的活动带有<strong>绿色「已签到」</strong>标签与<strong>左侧短绿条</strong>（居中、约占行高 90%），可与尚未签到的活动区分。
         </p>
         <div class="grouped-list">
@@ -129,7 +133,6 @@ function open(id) {
             :key="s.id"
             type="button"
             class="list-cell chevron participant-session-list__row-btn"
-            style="width: 100%; border: none; text-align: left"
             @click="open(s.id)"
           >
             <div
@@ -138,22 +141,26 @@ function open(id) {
             >
               <div class="participant-session-list__main">
                 <div class="list-cell__title">{{ s.title }}</div>
-                <div class="participant-session-list__time muted">
-                  {{ formatLocal(s.starts_at) }} — {{ formatLocal(s.ends_at) }}
-                </div>
               </div>
               <div class="participant-session-list__tags">
                 <span v-if="s.has_checked_in" class="pill pill-checked-in">已签到</span>
-                <span v-if="scopeLabel(s)" class="pill pill-ended">{{ scopeLabel(s) }}</span>
+                <span v-if="scopeLabel(s)" class="pill pill-scope">{{ scopeLabel(s) }}</span>
                 <span :class="['pill', statusPill(s).cls]">{{ statusPill(s).text }}</span>
+              </div>
+              <div class="participant-session-list__time muted">
+                {{ formatLocal(s.starts_at) }} — {{ formatLocal(s.ends_at) }}
               </div>
             </div>
           </button>
         </div>
       </template>
 
-      <div v-else class="card card-pad muted">
-        下方暂无活动。邀请制可在上方填写编号与邀请码加入；名单制需组织者在名单中勾选你。
+      <div v-else class="empty-state" role="status">
+        <div class="empty-state__icon" aria-hidden="true">📋</div>
+        <p class="empty-state__title">暂无活动</p>
+        <p class="empty-state__text">
+          邀请制可在上方填写编号与邀请码加入；名单制需组织者在名单中勾选你。
+        </p>
       </div>
     </div>
   </div>

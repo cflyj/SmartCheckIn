@@ -57,40 +57,40 @@ onMounted(async () => {
       </template>
     </AppNavBar>
 
-    <div class="content">
-      <p class="muted" style="font-size: 14px; margin-bottom: 12px">
+    <div class="content stack stack--md">
+      <p class="muted text-body-xs section-hint">
         新建活动仅支持「仅指定成员」或「邀请码」，不再提供「任何人可签到」，减轻无关用户列表干扰。「邀请码」类：参与者需在活动页填写<strong>活动编号/链接</strong>与<strong>活动邀请码</strong>；「仅指定成员」需在组织成员中勾选名单。
       </p>
-      <p v-if="copyTip" class="muted" style="font-size: 14px; margin-bottom: 12px">{{ copyTip }}</p>
+      <p v-if="copyTip" class="muted text-body-xs section-hint u-mt-0">{{ copyTip }}</p>
       <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-if="loading" class="spinner-wrap muted">加载中…</div>
+      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true" />
+        <span>加载中…</span>
+      </div>
 
-      <div v-else-if="!sessions.length" class="card card-pad muted">还没有活动，点击右上角新建。</div>
+      <div v-else-if="!sessions.length" class="empty-state" role="status">
+        <div class="empty-state__icon" aria-hidden="true">📅</div>
+        <p class="empty-state__title">还没有活动</p>
+        <p class="empty-state__text">点击右上角「新建」创建签到活动。</p>
+      </div>
 
       <div v-else class="grouped-list">
-        <div
-          v-for="s in sessions"
-          :key="s.id"
-          class="list-cell"
-          style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%"
-        >
+        <div v-for="s in sessions" :key="s.id" class="list-cell list-cell--bundle list-cell--static">
           <button
             type="button"
-            class="list-cell chevron"
-            style="flex: 1; min-width: 0; border: none; text-align: left; background: transparent; padding: 0; cursor: pointer"
+            class="organizer-row__link chevron"
             @click="router.push({ name: 'organizer-session-edit', params: { id: s.id } })"
           >
-            <div style="flex: 1; min-width: 0">
+            <div class="organizer-row__link-body">
               <div class="list-cell__title">{{ s.title }}</div>
-              <div class="muted" style="font-size: 14px; margin-top: 4px">{{ formatLocal(s.starts_at) }}</div>
+              <div class="muted meta-under-title">{{ formatLocal(s.starts_at) }}</div>
             </div>
             <span :class="['pill', pill(s).cls]">{{ pill(s).text }}</span>
           </button>
           <button
             v-if="s.participant_scope === 'invite'"
             type="button"
-            class="btn btn-secondary"
-            style="flex-shrink: 0; margin-left: auto"
+            class="btn btn-secondary btn--shrink organizer-row__copy"
             @click.stop="copyParticipantLink(s.id)"
           >
             复制参与者链接

@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { api, ApiError } from '../../api/client.js'
-import AppNavBar from '../../components/AppNavBar.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,31 +40,28 @@ watch(id, refresh)
 </script>
 
 <template>
-  <div class="page" style="background: linear-gradient(180deg, #1c1c1e 0%, #000 100%); min-height: 100dvh">
-    <header
-      class="nav-bar"
-      style="background: rgba(28, 28, 30, 0.85); border-color: rgba(255, 255, 255, 0.08); color: #fff"
-    >
+  <div class="page theme-display">
+    <header class="nav-bar">
       <div class="nav-bar__row">
         <button
           type="button"
           class="nav-bar__back"
-          style="color: #0a84ff"
+          aria-label="返回"
           @click="router.push({ name: 'organizer-session-edit', params: { id } })"
         >
           ‹ 返回
         </button>
-        <span class="nav-bar__title" style="color: #fff">签到二维码</span>
+        <span class="nav-bar__title">签到二维码</span>
       </div>
     </header>
 
-    <div class="content" style="text-align: center; padding-top: 24px">
-      <p style="color: rgba(255, 255, 255, 0.55); font-size: 15px; margin: 0 0 20px">请参与者使用相机扫描，令牌会定期刷新</p>
-      <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-else class="qr-frame" style="margin: 0 auto 20px">
-        <img v-if="dataUrl" :src="dataUrl" alt="QR" />
+    <div class="content content--center">
+      <p class="theme-display__hint">请参与者使用相机扫描，令牌会定期刷新</p>
+      <div v-if="error" class="banner-error banner-error--on-dark">{{ error }}</div>
+      <div v-else class="qr-frame qr-frame--center">
+        <img v-if="dataUrl" :src="dataUrl" alt="签到二维码" />
       </div>
-      <p v-if="expiresAt" style="color: rgba(255, 255, 255, 0.45); font-size: 13px; word-break: break-all">
+      <p v-if="expiresAt" class="theme-display__meta">
         当前令牌至 {{ new Date(expiresAt).toLocaleTimeString() }} 前有效
       </p>
     </div>

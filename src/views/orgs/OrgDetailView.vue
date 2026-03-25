@@ -214,31 +214,34 @@ function canRemove(m) {
   <div class="page">
     <AppNavBar :title="org?.name || '组织'" @back="router.push({ name: 'orgs' })" />
 
-    <div class="content">
+    <div class="content stack stack--md stack--airy">
       <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-if="loading" class="spinner-wrap muted">加载中…</div>
+      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true" />
+        <span>加载中…</span>
+      </div>
 
       <template v-else-if="org">
         <div v-if="actionErr" class="banner-error">{{ actionErr }}</div>
 
-        <div v-if="newCodePlain" class="card card-pad" style="margin-bottom: 16px">
-          <p class="muted" style="margin-top: 0">新加入码（请立即保存）</p>
-          <p v-if="inviteOnly" class="muted" style="font-size: 13px; line-height: 1.4; margin-bottom: 8px">
+        <div v-if="newCodePlain" class="card card-pad card--spaced">
+          <p class="muted u-mt-0">新加入码（请立即保存）</p>
+          <p v-if="inviteOnly" class="muted text-note u-mb-2">
             当前为仅邀请模式，他人仍不能凭此码自助进组。
           </p>
-          <p style="font-size: 20px; font-weight: 600; letter-spacing: 0.08em">{{ newCodePlain }}</p>
+          <p class="join-code-display">{{ newCodePlain }}</p>
         </div>
 
-        <div v-if="canManage" class="card card-pad" style="margin-bottom: 16px">
-          <p class="list-cell__title" style="margin-bottom: 8px">添加成员</p>
-          <p v-if="inviteOnly" class="muted" style="font-size: 14px; margin-top: 0; line-height: 1.45">
+        <div v-if="canManage" class="card card-pad card--spaced stack">
+          <p class="list-cell__title u-mb-2">添加成员</p>
+          <p v-if="inviteOnly" class="muted text-body-xs u-mt-0">
             当前为<strong>仅邀请</strong>：对方不能凭码进组。多人可能同名昵称，请<strong>搜索后点选</strong>；或已知对方<strong>登录用户名</strong>时可跳过搜索。
           </p>
-          <p v-else class="muted" style="font-size: 14px; margin-top: 0; line-height: 1.45">
+          <p v-else class="muted text-body-xs u-mt-0">
             显示名可能重复，建议先<strong>搜索昵称或用户名关键字</strong>再点选；也可直接输入完整登录用户名添加。
           </p>
           <div v-if="addErr" class="banner-error">{{ addErr }}</div>
-          <div class="field" style="margin-bottom: 12px">
+          <div class="field field--tight-below">
             <label>搜索或输入用户名</label>
             <div class="form-row">
               <input
@@ -253,27 +256,18 @@ function canRemove(m) {
               </button>
             </div>
           </div>
-          <div v-if="lookupHits.length" class="grouped-list" style="margin-bottom: 12px">
-            <p class="muted" style="font-size: 13px; padding: 8px 14px 0; margin: 0">点选要添加的人（以 @用户名 为准，不会加错）</p>
+          <div v-if="lookupHits.length" class="grouped-list u-mb-3">
+            <p class="pill-list-hint">点选要添加的人（以 @用户名 为准，不会加错）</p>
             <button
               v-for="u in lookupHits"
               :key="u.id"
               type="button"
-              class="list-cell"
-              style="
-                width: 100%;
-                border: none;
-                text-align: left;
-                cursor: pointer;
-                flex-direction: column;
-                align-items: flex-start;
-                background: var(--ios-bg-elevated);
-              "
-              :style="pickedUser?.id === u.id ? { boxShadow: 'inset 0 0 0 2px var(--ios-blue)' } : undefined"
+              class="list-cell list-cell--pick"
+              :class="{ 'is-selected': pickedUser?.id === u.id }"
               @click="pickedUser = u"
             >
               <span class="list-cell__title">{{ u.display_name }}</span>
-              <span class="muted" style="font-size: 14px; margin-top: 4px">@{{ u.username }}</span>
+              <span class="muted meta-under-title">@{{ u.username }}</span>
             </button>
           </div>
           <button type="button" class="btn btn-primary" @click="addMember">
@@ -285,8 +279,8 @@ function canRemove(m) {
           </button>
         </div>
 
-        <div class="card card-pad" style="margin-bottom: 16px">
-          <p class="muted" style="margin-top: 0">你在本组织：{{ roleLabel(org.my_role) }} · 共 {{ org.member_count }} 人</p>
+        <div class="card card-pad card--spaced stack">
+          <p class="muted u-mt-0">你在本组织：{{ roleLabel(org.my_role) }} · 共 {{ org.member_count }} 人</p>
           <template v-if="canManage">
             <div class="field">
               <label>组织名称</label>
@@ -295,14 +289,14 @@ function canRemove(m) {
                 <button type="button" class="btn btn-secondary" @click="saveRename">保存</button>
               </div>
             </div>
-            <button type="button" class="btn btn-secondary" style="margin-top: 8px" @click="regenerateCode">
+            <button type="button" class="btn btn-secondary u-mt-2" @click="regenerateCode">
               重置加入码
             </button>
-            <p v-if="inviteOnly" class="muted" style="font-size: 13px; line-height: 1.4; margin: 8px 0 0">重置后旧码失效；加入码不能用来拉人。</p>
+            <p v-if="inviteOnly" class="muted text-note u-mt-2 u-mb-0">重置后旧码失效；加入码不能用来拉人。</p>
             <template v-if="isOwner">
-              <div class="field" style="margin-top: 12px; margin-bottom: 0">
+              <div class="field u-mt-3 field--flush">
                 <label>谁可以进组</label>
-                <p class="muted" style="font-size: 13px; margin: 0 0 8px">
+                <p class="muted text-note u-mb-2 u-mt-0">
                   当前：{{ joinPolicyLabel(org.join_policy || 'open') }}
                 </p>
                 <div class="form-row">
@@ -315,38 +309,36 @@ function canRemove(m) {
                 </div>
               </div>
             </template>
-            <p v-else-if="canManage" class="muted" style="font-size: 13px; margin-top: 12px; margin-bottom: 0">
+            <p v-else-if="canManage" class="muted text-note u-mt-3 u-mb-0">
               进组方式：{{ joinPolicyLabel(org.join_policy || 'open') }}（仅负责人可改）
             </p>
           </template>
         </div>
 
-        <div
-          v-if="canManage && org.pending_join_requests?.length"
-          class="card card-pad"
-          style="margin-bottom: 16px"
-        >
-          <p class="list-cell__title" style="margin-bottom: 8px">待审核入组申请</p>
+        <div v-if="canManage && org.pending_join_requests?.length" class="card card-pad card--spaced stack">
+          <p class="list-cell__title u-mb-2">待审核入组申请</p>
           <div
             v-for="r in org.pending_join_requests"
             :key="r.user_id"
-            class="list-cell"
-            style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; flex-wrap: wrap"
+            class="list-cell list-cell--request list-cell--static"
           >
             <div>
               <div class="list-cell__title">{{ r.display_name }}</div>
-              <div class="muted" style="font-size: 13px; margin-top: 4px">@{{ r.username }} · 申请 {{ r.created_at }}</div>
+              <div class="muted meta-under-title meta-under-title--13">@{{ r.username }} · 申请 {{ r.created_at }}</div>
             </div>
-            <div class="form-row form-row--equal" style="flex-shrink: 0; margin: 0">
+            <div class="form-row form-row--equal form-row--no-shrink">
               <button type="button" class="btn btn-primary" @click="approveRequest(r.user_id)">通过</button>
               <button type="button" class="btn btn-secondary" @click="rejectRequest(r.user_id)">拒绝</button>
             </div>
           </div>
         </div>
 
-        <div v-if="isOwner && org.members?.filter((m) => m.id !== auth.user?.id).length" class="card card-pad" style="margin-bottom: 16px">
-          <p class="list-cell__title" style="margin-bottom: 8px">转让负责人</p>
-          <select v-model="transferUserId" class="select input" style="margin-bottom: 10px">
+        <div
+          v-if="isOwner && org.members?.filter((m) => m.id !== auth.user?.id).length"
+          class="card card-pad card--spaced stack"
+        >
+          <p class="list-cell__title u-mb-2">转让负责人</p>
+          <select v-model="transferUserId" class="select input select--spaced">
             <option value="">选择成员</option>
             <option v-for="m in org.members.filter((x) => x.id !== auth.user?.id)" :key="m.id" :value="m.id">
               {{ m.display_name }}（{{ m.username }}）
@@ -355,19 +347,19 @@ function canRemove(m) {
           <button type="button" class="btn btn-secondary" :disabled="!transferUserId" @click="transfer">转让</button>
         </div>
 
-        <p class="muted" style="font-size: 14px; margin-bottom: 8px">成员列表</p>
-        <div class="grouped-list" style="margin-bottom: 20px">
-          <div
-            v-for="m in org.members"
-            :key="m.id"
-            class="list-cell"
-            style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0"
-          >
+        <p class="muted text-body-xs section-hint u-mb-2">成员列表</p>
+        <div class="grouped-list u-mb-5">
+          <div v-for="m in org.members" :key="m.id" class="list-cell list-cell--member-row list-cell--static">
             <div>
               <div class="list-cell__title">{{ m.display_name }}</div>
-              <div class="muted" style="font-size: 13px; margin-top: 4px">@{{ m.username }} · {{ roleLabel(m.role) }}</div>
+              <div class="muted meta-under-title meta-under-title--13">@{{ m.username }} · {{ roleLabel(m.role) }}</div>
             </div>
-            <button v-if="canRemove(m)" type="button" class="btn btn-secondary" style="flex-shrink: 0" @click="removeMember(m.id)">
+            <button
+              v-if="canRemove(m)"
+              type="button"
+              class="btn btn-secondary btn--shrink"
+              @click="removeMember(m.id)"
+            >
               移除
             </button>
           </div>

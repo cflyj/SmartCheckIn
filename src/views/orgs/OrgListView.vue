@@ -37,29 +37,35 @@ function roleLabel(r) {
       </template>
     </AppNavBar>
 
-    <div class="content">
-      <p class="muted" style="font-size: 14px; margin-bottom: 12px; line-height: 1.45">
+    <div class="content stack stack--md">
+      <p class="muted text-body-xs section-hint">
         可凭加入码加入（若对方允许），或由管理员直接加你的用户名。名单制签到时，只能从你已加入的组织里选人。
       </p>
-      <button type="button" class="btn btn-secondary" style="margin-bottom: 16px" @click="router.push({ name: 'org-join' })">
+      <button type="button" class="btn btn-secondary u-mb-4" @click="router.push({ name: 'org-join' })">
         我有加入码
       </button>
 
       <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-if="loading" class="spinner-wrap muted">加载中…</div>
-      <div v-else-if="!list.length" class="card card-pad muted">暂无组织，可新建或加入。</div>
+      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true" />
+        <span>加载中…</span>
+      </div>
+      <div v-else-if="!list.length" class="empty-state" role="status">
+        <div class="empty-state__icon" aria-hidden="true">🏢</div>
+        <p class="empty-state__title">暂无组织</p>
+        <p class="empty-state__text">可新建组织或使用加入码加入。</p>
+      </div>
       <div v-else class="grouped-list">
         <button
           v-for="o in list"
           :key="o.id"
           type="button"
           class="list-cell chevron"
-          style="width: 100%; border: none; text-align: left"
           @click="router.push({ name: 'org-detail', params: { id: o.id } })"
         >
           <div>
             <div class="list-cell__title">{{ o.name }}</div>
-            <div class="muted" style="font-size: 14px; margin-top: 4px">{{ roleLabel(o.my_role) }}</div>
+            <div class="muted meta-under-title">{{ roleLabel(o.my_role) }}</div>
           </div>
         </button>
       </div>

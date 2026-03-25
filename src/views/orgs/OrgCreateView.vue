@@ -55,9 +55,9 @@ function done() {
   <div class="page">
     <AppNavBar title="新建组织" @back="router.push({ name: 'orgs' })" />
 
-    <div class="content">
+    <div class="content stack stack--md">
       <template v-if="!createdInfo">
-        <p class="muted" style="font-size: 14px; line-height: 1.45">
+        <p class="muted text-body-xs">
           {{ introHint }}
         </p>
         <div v-if="err" class="banner-error">{{ err }}</div>
@@ -75,10 +75,10 @@ function done() {
         </div>
         <div class="field">
           <label>{{ isInviteOnly ? '加入码（可选）' : '自定义加入码（可选）' }}</label>
-          <p v-if="isInviteOnly" class="muted" style="font-size: 13px; margin: 0 0 8px; line-height: 1.4">
+          <p v-if="isInviteOnly" class="muted text-note u-mb-2 u-mt-0">
             不填则系统自动生成。仅邀请模式下，加入码<strong>不能</strong>让别人自己进组，只方便你自己核对。
           </p>
-          <p v-else class="muted" style="font-size: 13px; margin: 0 0 8px; line-height: 1.4">至少 4 位；留空则随机 8 位。</p>
+          <p v-else class="muted text-note u-mb-2 u-mt-0">至少 4 位；留空则随机 8 位。</p>
           <input v-model="joinCodeCustom" class="input" autocomplete="off" placeholder="留空则自动生成" />
         </div>
         <button type="button" class="btn btn-primary" :disabled="loading" @click="submit">
@@ -86,22 +86,22 @@ function done() {
         </button>
       </template>
       <template v-else>
-        <div class="card card-pad">
-          <p class="list-cell__title" style="margin-bottom: 8px">组织已创建</p>
+        <div class="card card-pad stack">
+          <p class="list-cell__title u-mb-2">组织已创建</p>
           <template v-if="createdInfo.join_policy === 'invite_only'">
-            <p class="muted" style="font-size: 14px; line-height: 1.5; margin-top: 0">
+            <p class="muted text-body-xs u-mt-0">
               下一步：在「我的组织」里打开该组织，用<strong>添加成员</strong>输入对方<strong>用户名</strong>即可拉人。
             </p>
-            <p class="muted" style="font-size: 13px; line-height: 1.45; margin-bottom: 0">
+            <p class="muted text-note u-mb-0">
               下方是一串加入码，仅供你自己备忘或口头核对「是哪个组织」；对方<strong>无法</strong>靠它自己进组。
             </p>
-            <p style="font-size: 18px; font-weight: 600; letter-spacing: 0.06em; margin: 14px 0 0">{{ createdInfo.join_code }}</p>
+            <p class="join-code-display join-code-display--md">{{ createdInfo.join_code }}</p>
           </template>
           <template v-else>
-            <p class="muted" style="font-size: 14px; margin-top: 0; line-height: 1.45">
+            <p class="muted text-body-xs u-mt-0">
               请复制保存加入码发给成员。关闭本页后只能到组织详情里<strong>重置加入码</strong>才能换新码。
             </p>
-            <p style="font-size: 20px; font-weight: 600; letter-spacing: 0.08em; margin: 16px 0">{{ createdInfo.join_code }}</p>
+            <p class="join-code-display u-mt-4">{{ createdInfo.join_code }}</p>
           </template>
         </div>
         <button type="button" class="btn btn-primary" @click="done">完成</button>

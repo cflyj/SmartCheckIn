@@ -38,13 +38,13 @@ async function submit() {
 
 <template>
   <div class="page">
-    <div class="content" style="padding-top: calc(24px + var(--safe-top))">
+    <div class="content content--auth stack stack--md">
       <h1 class="headline">注册</h1>
-      <p class="subhead">注册后可发起自己的签到活动，也可参与他人活动。</p>
+      <p class="subhead subhead--flush">注册后可发起自己的签到活动，也可参与他人活动。</p>
 
       <div v-if="error" class="banner-error">{{ error }}</div>
 
-      <div class="card card-pad" style="margin-bottom: 24px">
+      <div class="card card-pad">
         <div class="field">
           <label for="reg-u">用户名</label>
           <input id="reg-u" v-model="username" class="input" autocomplete="username" placeholder="2～32 位" />
@@ -57,7 +57,7 @@ async function submit() {
           <label for="reg-p">密码（至少 8 位）</label>
           <input id="reg-p" v-model="password" class="input" type="password" autocomplete="new-password" />
         </div>
-        <div class="field" style="margin-bottom: 0">
+        <div class="field field--flush">
           <label for="reg-p2">确认密码</label>
           <input id="reg-p2" v-model="password2" class="input" type="password" autocomplete="new-password" />
         </div>
@@ -67,7 +67,7 @@ async function submit() {
         {{ loading ? '注册中…' : '注册并登录' }}
       </button>
 
-      <p class="muted" style="margin-top: 20px; text-align: center">
+      <p class="muted text-caption text-center">
         已有账号？
         <router-link to="/login">去登录</router-link>
       </p>

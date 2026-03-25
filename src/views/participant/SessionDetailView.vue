@@ -271,15 +271,18 @@ onUnmounted(() => {
   <div class="page">
     <AppNavBar :title="session?.title || '活动'" @back="router.push({ name: 'participant-sessions' })" />
 
-    <div class="content">
-      <div v-if="loading" class="spinner-wrap muted">加载中…</div>
+    <div class="content stack stack--md stack--airy">
+      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true" />
+        <span>加载中…</span>
+      </div>
       <div v-else-if="error" class="banner-error">{{ error }}</div>
 
       <template v-else-if="session">
-        <div v-if="joinRequired" class="card card-pad" style="margin-bottom: 20px">
-          <p class="list-cell__title" style="margin-bottom: 8px">{{ session.title }}</p>
-          <p class="muted" style="margin-top: 0">本活动需要邀请码。请输入组织者提供的口令后加入，即可签到。</p>
-          <div v-if="joinErr" class="banner-error" style="margin-top: 12px">{{ joinErr }}</div>
+        <div v-if="joinRequired" class="card card-pad card--spaced-lg stack">
+          <p class="list-cell__title u-mb-2">{{ session.title }}</p>
+          <p class="muted u-mt-0">本活动需要邀请码。请输入组织者提供的口令后加入，即可签到。</p>
+          <div v-if="joinErr" class="banner-error banner--tight u-mt-0">{{ joinErr }}</div>
           <div class="field">
             <label>邀请码</label>
             <input v-model="joinCode" class="input" autocomplete="off" placeholder="向组织者索取" />
@@ -290,12 +293,12 @@ onUnmounted(() => {
         </div>
 
         <template v-else>
-        <div class="card card-pad" style="margin-bottom: 20px">
-          <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px">
-            <span class="muted" style="margin: 0">{{ formatLocal(session.starts_at) }} — {{ formatLocal(session.ends_at) }}</span>
+        <div class="card card-pad card--spaced-lg stack">
+          <div class="flex-row-wrap u-mb-0">
+            <span class="muted u-mb-0">{{ formatLocal(session.starts_at) }} — {{ formatLocal(session.ends_at) }}</span>
           </div>
-          <p v-if="session.status === 'scheduled'" class="muted" style="margin-top: 12px; margin-bottom: 0">活动尚未开始，可稍后再来签到。</p>
-          <p v-else-if="session.status === 'ended'" class="muted" style="margin-top: 12px; margin-bottom: 0">活动已结束。</p>
+          <p v-if="session.status === 'scheduled'" class="muted u-mt-3 u-mb-0">活动尚未开始，可稍后再来签到。</p>
+          <p v-else-if="session.status === 'ended'" class="muted u-mt-3 u-mb-0">活动已结束。</p>
         </div>
 
         <div v-if="hasGeo && hasQr" class="tabs">
@@ -303,32 +306,34 @@ onUnmounted(() => {
           <button type="button" :class="['tab', tab === 'qr' && 'tab--active']" @click="tab = 'qr'">二维码</button>
         </div>
 
-        <div v-show="tab === 'geo' && hasGeo" class="card card-pad">
-          <p class="muted" style="margin-top: 0">
+        <div v-show="tab === 'geo' && hasGeo" class="card card-pad stack">
+          <p class="form-section-title">地理位置签到</p>
+          <p class="muted u-mt-0">
             请在活动现场开启定位。系统<strong>只按距离</strong>判断是否在圈内（不再卡「定位精度」数字，室内更友好）。若仍难成功，请组织者<strong>加大允许半径</strong>或改用二维码签到。
           </p>
-          <button type="button" class="btn btn-secondary" style="margin-bottom: 12px" :disabled="locating" @click="locate">
+          <button type="button" class="btn btn-secondary u-mb-3" :disabled="locating" @click="locate">
             {{ locating ? '正在获取定位（约 10 秒）…' : '获取 / 刷新定位' }}
           </button>
-          <div v-if="clientPos" class="muted" style="margin-bottom: 12px">
+          <div v-if="clientPos" class="muted u-mb-3">
             当前精度约 {{ Math.round(clientPos.accuracy) }} 米
             <template v-if="geoMinAccuracy"> · 活动要求不劣于 {{ geoMinAccuracy }} 米</template>
             <template v-if="distM != null"> · 距签到点约 {{ distM }} 米</template>
           </div>
-          <div v-if="geoMsg" :class="geoOk ? 'banner-success' : 'banner-error'" style="margin-bottom: 12px">{{ geoMsg }}</div>
+          <div v-if="geoMsg" :class="[geoOk ? 'banner-success' : 'banner-error', 'banner--tight']">{{ geoMsg }}</div>
           <button type="button" class="btn btn-primary" :disabled="geoWorking || session.status !== 'active'" @click="submitGeo">
             {{ geoWorking ? '提交中…' : '确认地理签到' }}
           </button>
         </div>
 
-        <div v-show="tab === 'qr' && hasQr" class="card card-pad">
-          <p class="muted" style="margin-top: 0">扫描组织者大屏上的动态二维码，或请对方朗读令牌后手动输入。</p>
+        <div v-show="tab === 'qr' && hasQr" class="card card-pad stack">
+          <p class="form-section-title">二维码签到</p>
+          <p class="muted u-mt-0">扫描组织者大屏上的动态二维码，或请对方朗读令牌后手动输入。</p>
           <div class="field">
             <label>令牌</label>
             <input v-model="qrInput" class="input" placeholder="粘贴或扫描" autocomplete="off" />
           </div>
-          <button type="button" class="btn btn-secondary" style="margin-bottom: 12px" @click="openScanner">扫描二维码</button>
-          <div v-if="qrMsg" :class="qrOk ? 'banner-success' : 'banner-error'" style="margin-bottom: 12px">{{ qrMsg }}</div>
+          <button type="button" class="btn btn-secondary u-mb-3" @click="openScanner">扫描二维码</button>
+          <div v-if="qrMsg" :class="[qrOk ? 'banner-success' : 'banner-error', 'banner--tight']">{{ qrMsg }}</div>
           <button type="button" class="btn btn-primary" :disabled="qrWorking || session.status !== 'active'" @click="submitQr">
             {{ qrWorking ? '提交中…' : '确认扫码签到' }}
           </button>
@@ -340,27 +345,16 @@ onUnmounted(() => {
     </div>
 
     <Teleport to="body">
-      <div
-        v-if="showScanner"
-        style="
-          position: fixed;
-          inset: 0;
-          z-index: 100;
-          background: #000;
-          display: flex;
-          flex-direction: column;
-          padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
-        "
-      >
+      <div v-if="showScanner" class="qr-scanner-overlay">
         <button
           type="button"
-          class="btn btn-secondary"
-          style="margin-bottom: 12px; flex-shrink: 0"
+          class="btn btn-secondary qr-scanner-overlay__close"
+          aria-label="关闭相机"
           @click="closeScanner"
         >
           关闭相机
         </button>
-        <div :id="readerId" style="flex: 1; min-height: 0" />
+        <div :id="readerId" class="qr-scanner-overlay__reader" />
       </div>
     </Teleport>
   </div>

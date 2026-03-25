@@ -60,33 +60,31 @@ function exportCsv() {
       </template>
     </AppNavBar>
 
-    <div class="content">
-      <div class="tabs" style="margin-bottom: 16px">
+    <div class="content stack stack--md">
+      <div class="tabs tabs--tight">
         <button type="button" :class="['tab', filter === 'all' && 'tab--active']" @click="filter = 'all'">全部</button>
         <button type="button" :class="['tab', filter === 'ok' && 'tab--active']" @click="filter = 'ok'">成功</button>
         <button type="button" :class="['tab', filter === 'fail' && 'tab--active']" @click="filter = 'fail'">失败</button>
       </div>
 
       <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-if="loading" class="spinner-wrap muted">加载中…</div>
+      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true" />
+        <span>加载中…</span>
+      </div>
 
       <div v-else class="grouped-list">
-        <div
-          v-for="r in records"
-          :key="r.id"
-          class="list-cell"
-          style="cursor: default; flex-direction: column; align-items: stretch"
-        >
-          <div style="display: flex; justify-content: space-between; gap: 8px">
+        <div v-for="r in records" :key="r.id" class="list-cell list-cell--col list-cell--static">
+          <div class="record-row__head">
             <span class="list-cell__title">{{ r.user_display_name || r.username }}</span>
             <span :class="['pill', r.success ? 'pill-active' : 'pill-ended']">{{ r.success ? '成功' : '失败' }}</span>
           </div>
-          <div class="muted" style="font-size: 14px; margin-top: 6px">
+          <div class="muted record-row__meta">
             {{ r.method }} · {{ formatLocal(r.server_at) }}
             <template v-if="!r.success && r.failure_code"> · {{ r.failure_code }}</template>
           </div>
         </div>
-        <div v-if="!records.length" class="list-cell muted" style="cursor: default">暂无记录</div>
+        <div v-if="!records.length" class="list-cell muted list-cell--static">暂无记录</div>
       </div>
     </div>
   </div>
