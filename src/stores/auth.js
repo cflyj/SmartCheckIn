@@ -7,7 +7,6 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
 
   const isLoggedIn = computed(() => !!token.value)
-  const isOrganizer = computed(() => user.value?.role === 'organizer')
 
   function setSession(t, u) {
     token.value = t
@@ -40,5 +39,5 @@ export const useAuthStore = defineStore('auth', () => {
     setSession('', null)
   }
 
-  return { token, user, isLoggedIn, isOrganizer, login, register, logout, setSession }
+  return { token, user, isLoggedIn, login, register, logout, setSession }
 })

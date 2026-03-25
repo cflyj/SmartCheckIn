@@ -39,7 +39,7 @@ function pill(s) {
 onMounted(async () => {
   loading.value = true
   try {
-    const data = await api('/sessions')
+    const data = await api('/sessions?mine=1')
     sessions.value = data.sessions || []
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '加载失败'
@@ -51,7 +51,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <AppNavBar title="我的活动" @back="router.push({ name: 'home' })">
+    <AppNavBar title="我发起的活动" @back="router.push({ name: 'home' })">
       <template #right>
         <button type="button" class="nav-bar__action" @click="router.push({ name: 'organizer-session-new' })">新建</button>
       </template>
@@ -59,7 +59,7 @@ onMounted(async () => {
 
     <div class="content">
       <p class="muted" style="font-size: 14px; margin-bottom: 12px">
-        「邀请码」类活动：参与者需在<strong>活动页顶部</strong>填写<strong>活动编号或下方复制的链接</strong>以及<strong>活动邀请码</strong>才能加入；「仅指定成员」需在名单中勾选对应账号。
+        新建活动仅支持「仅指定成员」或「邀请码」，不再提供「任何人可签到」，减轻无关用户列表干扰。「邀请码」类：参与者需在活动页填写<strong>活动编号/链接</strong>与<strong>活动邀请码</strong>；「仅指定成员」需在组织成员中勾选名单。
       </p>
       <p v-if="copyTip" class="muted" style="font-size: 14px; margin-bottom: 12px">{{ copyTip }}</p>
       <div v-if="error" class="banner-error">{{ error }}</div>

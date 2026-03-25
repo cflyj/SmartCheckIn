@@ -19,40 +19,69 @@ const radiusM = ref(250)
 const lat = ref(39.9042)
 const lng = ref(116.4074)
 const qrTtl = ref(60)
-const participantScope = ref('open')
-/** 用数组而非 Set，保证模板里 :checked / includes 能稳定触发更新 */
-const rosterUserIds = ref([])
-const organizerJoinsRoster = ref(false)
+const participantScope = ref('roster')
+/** 名单制：先选组织（须已加入），再在成员池内勾选 */
+const myOrgs = ref([])
+const selectedOrgIds = ref([])
+const rosterPool = ref([])
+const rosterSelectedIds = ref([])
+const rosterLoadErr = ref('')
+/** 编辑历史「任何人可签到」活动时提示改为名单/邀请码 */
+const needsScopeMigration = ref(false)
 const inviteCode = ref('')
-const participantOptions = ref([])
 const saving = ref(false)
 const error = ref('')
 const loading = ref(false)
 
-function setRosterMember(id, checked) {
-  const cur = [...rosterUserIds.value]
-  if (checked) {
-    if (!cur.includes(id)) cur.push(id)
-  } else {
-    const i = cur.indexOf(id)
-    if (i !== -1) cur.splice(i, 1)
+async function loadMyOrgs() {
+  try {
+    const data = await api('/orgs')
+    myOrgs.value = data.organizations || []
+  } catch {
+    myOrgs.value = []
   }
-  rosterUserIds.value = cur
 }
 
-async function loadParticipants() {
+async function refreshRosterPool() {
+  rosterLoadErr.value = ''
+  rosterPool.value = []
+  if (participantScope.value !== 'roster') return
+  const ids = selectedOrgIds.value
+  if (!ids.length) return
+  const q = ids.join(',')
   try {
-    const data = await api('/users/participants')
-    participantOptions.value = data.users || []
-  } catch {
-    participantOptions.value = []
+    const data = await api(`/orgs/roster-candidates?org_ids=${encodeURIComponent(q)}`)
+    rosterPool.value = data.users || []
+    rosterSelectedIds.value = rosterSelectedIds.value.filter((uid) => rosterPool.value.some((u) => u.id === uid))
+  } catch (e) {
+    rosterLoadErr.value = e instanceof ApiError ? e.message : '加载成员池失败'
+    rosterPool.value = []
   }
+}
+
+function setOrgSelected(orgId, checked) {
+  const s = new Set(selectedOrgIds.value)
+  if (checked) s.add(orgId)
+  else s.delete(orgId)
+  selectedOrgIds.value = [...s]
+}
+
+function setRosterUserSelected(uid, checked) {
+  const cur = new Set(rosterSelectedIds.value)
+  if (checked) cur.add(uid)
+  else cur.delete(uid)
+  rosterSelectedIds.value = [...cur]
 }
 
 async function load() {
-  await loadParticipants()
+  await loadMyOrgs()
   if (!isEdit.value) {
     inviteCode.value = ''
+    selectedOrgIds.value = []
+    rosterPool.value = []
+    rosterSelectedIds.value = []
+    rosterLoadErr.value = ''
+    needsScopeMigration.value = false
     return
   }
   loading.value = true
@@ -64,9 +93,13 @@ async function load() {
     startsAt.value = isoToLocalInput(s.starts_at)
     endsAt.value = isoToLocalInput(s.ends_at)
     checkinModes.value = s.checkin_modes
-    participantScope.value = s.participant_scope === 'roster' ? 'roster' : s.participant_scope === 'invite' ? 'invite' : 'open'
-    rosterUserIds.value = [...(s.allowed_user_ids || [])]
-    organizerJoinsRoster.value = (s.allowed_user_ids || []).includes(auth.user?.id)
+    needsScopeMigration.value = s.participant_scope === 'open'
+    participantScope.value = s.participant_scope === 'invite' ? 'invite' : 'roster'
+    const allowed = s.allowed_user_ids || []
+    selectedOrgIds.value = [...(s.roster_org_ids || [])]
+    rosterSelectedIds.value =
+      s.participant_scope === 'roster' || s.participant_scope === 'open' ? [...allowed] : []
+    await refreshRosterPool()
     inviteCode.value = ''
 
     if (s.geo_config?.center) {
@@ -84,6 +117,46 @@ async function load() {
 
 onMounted(load)
 watch(() => route.params.id, load)
+
+watch(
+  () => [participantScope.value, selectedOrgIds.value.slice().sort().join(',')],
+  () => {
+    if (participantScope.value === 'roster') refreshRosterPool()
+  }
+)
+
+const organizerInPool = computed(() => {
+  const me = auth.user?.id
+  return me ? rosterPool.value.some((u) => u.id === me) : false
+})
+
+/** 与成员列表中「勾选自己」共用 rosterSelectedIds，避免两处状态不一致 */
+const organizerSelfSelected = computed({
+  get() {
+    const me = auth.user?.id
+    return me ? rosterSelectedIds.value.includes(me) : false
+  },
+  set(v) {
+    const me = auth.user?.id
+    if (!me) return
+    setRosterUserSelected(me, v)
+  },
+})
+
+const rosterAllSelected = computed(() => {
+  const pool = rosterPool.value
+  if (!pool.length) return false
+  const set = new Set(rosterSelectedIds.value)
+  return pool.every((u) => set.has(u.id))
+})
+
+function toggleSelectAllRoster() {
+  if (rosterAllSelected.value) {
+    rosterSelectedIds.value = []
+  } else {
+    rosterSelectedIds.value = rosterPool.value.map((u) => u.id)
+  }
+}
 
 function useMyLocation() {
   if (!navigator.geolocation) {
@@ -103,14 +176,6 @@ function useMyLocation() {
   )
 }
 
-function buildAllowedIds() {
-  const ids = [...new Set(rosterUserIds.value)]
-  if (organizerJoinsRoster.value && auth.user?.id && !ids.includes(auth.user.id)) {
-    ids.push(auth.user.id)
-  }
-  return ids
-}
-
 function buildBody() {
   const modes = checkinModes.value
   const scope = participantScope.value
@@ -120,7 +185,8 @@ function buildBody() {
     ends_at: localInputToIso(endsAt.value),
     checkin_modes: modes,
     participant_scope: scope,
-    allowed_user_ids: scope === 'roster' ? buildAllowedIds() : [],
+    allowed_user_ids: scope === 'roster' ? [...new Set(rosterSelectedIds.value)] : [],
+    roster_org_ids: scope === 'roster' ? [...selectedOrgIds.value] : [],
   }
   if (scope === 'invite') {
     const c = inviteCode.value.trim()
@@ -143,9 +209,15 @@ function buildBody() {
 
 async function save() {
   error.value = ''
-  if (participantScope.value === 'roster' && buildAllowedIds().length === 0) {
-    error.value = '名单模式下请至少选择一名成员，或勾选「我也参与签到」'
-    return
+  if (participantScope.value === 'roster') {
+    if (!selectedOrgIds.value.length) {
+      error.value = '名单制请至少选择一个组织作为成员范围'
+      return
+    }
+    if (![...new Set(rosterSelectedIds.value)].length) {
+      error.value = '请在成员列表中至少勾选一人（可与下方「我也参与签到」或名单中勾选项二选一，状态已同步）'
+      return
+    }
   }
   if (participantScope.value === 'invite') {
     if (!isEdit.value && inviteCode.value.trim().length < 4) {
@@ -192,19 +264,18 @@ async function save() {
             <input v-model="endsAt" class="input" type="datetime-local" />
           </div>
 
+          <div v-if="needsScopeMigration" class="banner-error" style="margin-bottom: 12px">
+            该活动曾为「任何人可签到」，已不再提供此方式（避免无关用户列表里出现本活动）。请改为「仅指定成员」或「邀请码」后保存。
+          </div>
           <p class="muted" style="font-size: 15px; margin-bottom: 8px">谁可以签到</p>
           <div class="field">
             <select v-model="participantScope" class="select input">
-              <option value="open">任何人（已注册用户）</option>
-              <option value="roster">仅指定成员（勾选名单）</option>
-              <option value="invite">邀请码（分享活动链接 + 口令）</option>
+              <option value="roster">仅指定成员（从已选组织成员中勾选）</option>
+              <option value="invite">邀请码（分享链接 + 口令后加入）</option>
             </select>
           </div>
-          <p v-if="participantScope === 'open'" class="muted" style="font-size: 14px; margin-top: 0">
-            所有登录用户可见并签到。地理围栏仍以距离判定，不再强制「定位精度」门槛（室内更稳）。
-          </p>
           <p v-if="participantScope === 'invite'" class="muted" style="font-size: 14px; margin-top: 0">
-            参与者需打开你分享的活动链接，输入邀请码通过后即可签到。邀请码与「注册组织者」用的开发者邀请码无关。
+            参与者使用活动链接或活动编号，并输入你设置的活动邀请码后即可签到。
           </p>
 
           <template v-if="participantScope === 'invite'">
@@ -220,30 +291,89 @@ async function save() {
           </template>
 
           <template v-if="participantScope === 'roster'">
-            <label class="muted" style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px">
-              <input v-model="organizerJoinsRoster" type="checkbox" />
-              我也参与签到（将组织者账号加入名单）
+            <p class="muted" style="font-size: 14px; margin-top: 0; line-height: 1.45">
+              勾选<strong>一个或多个</strong>你所在的组织，可选签到成员为所选组织的<strong>成员并集</strong>。请先
+              <router-link to="/orgs">管理组织</router-link>
+              或加入组织。
+            </p>
+            <label
+              class="muted"
+              style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px"
+            >
+              <input v-model="organizerSelfSelected" type="checkbox" :disabled="!organizerInPool" />
+              我也参与签到（与下方成员名单中勾选自己为同一状态）
             </label>
-            <p class="muted" style="font-size: 14px; margin-bottom: 8px">可签到成员</p>
+            <p v-if="!organizerInPool && selectedOrgIds.length" class="muted" style="font-size: 13px; margin: -8px 0 12px">
+              加载成员后即可勾选；若你不在所选组织中，无法加入名单。
+            </p>
+            <p class="muted" style="font-size: 14px; margin-bottom: 8px">成员范围（组织多选）</p>
             <div
-              v-if="!participantOptions.length"
+              v-if="!myOrgs.length"
               class="muted"
               style="font-size: 14px; padding: 12px; background: var(--ios-bg); border-radius: var(--radius-md)"
             >
-              暂无参与者账号，请先让用户注册，或改用「邀请码 / 任何人」模式。
+              你还没有加入任何组织，无法使用名单制。
+              <router-link to="/orgs">去我的组织</router-link>
             </div>
-            <div v-else class="grouped-list" style="margin-bottom: 0">
+            <div v-else class="grouped-list" style="margin-bottom: 16px">
               <label
-                v-for="u in participantOptions"
-                :key="u.id"
+                v-for="o in myOrgs"
+                :key="o.id"
                 class="list-cell"
-                style="cursor: pointer; margin: 0"
+                style="margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer"
               >
-                <span class="list-cell__title">{{ u.display_name }}（{{ u.username }}）</span>
+                <span class="list-cell__title" style="margin: 0">{{ o.name }}</span>
                 <input
                   type="checkbox"
-                  :checked="rosterUserIds.includes(u.id)"
-                  @change="setRosterMember(u.id, $event.target.checked)"
+                  :checked="selectedOrgIds.includes(o.id)"
+                  @change="setOrgSelected(o.id, $event.target.checked)"
+                />
+              </label>
+            </div>
+            <div v-if="rosterLoadErr" class="banner-error" style="margin-bottom: 12px">{{ rosterLoadErr }}</div>
+            <div
+              style="
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px 12px;
+                margin-bottom: 8px;
+              "
+            >
+              <p class="muted" style="font-size: 14px; margin: 0">
+                可选签到成员（{{ rosterPool.length }}）· 已勾选 {{ rosterSelectedIds.length }} 人
+              </p>
+              <button
+                v-if="rosterPool.length"
+                type="button"
+                class="btn btn-secondary"
+                style="width: auto; min-height: 40px; padding: 8px 14px"
+                @click="toggleSelectAllRoster"
+              >
+                {{ rosterAllSelected ? '全不选' : '全选' }}
+              </button>
+            </div>
+            <div
+              v-if="selectedOrgIds.length && !rosterPool.length && !rosterLoadErr"
+              class="muted"
+              style="font-size: 14px; padding: 12px; background: var(--ios-bg); border-radius: var(--radius-md)"
+            >
+              所选组织暂无成员；请先加入对应组织或调整范围。
+            </div>
+            <div v-else-if="rosterPool.length" class="grouped-list" style="margin-bottom: 0">
+              <label
+                v-for="u in rosterPool"
+                :key="u.id"
+                class="list-cell"
+                style="margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer"
+              >
+                <span class="list-cell__title" style="margin: 0">
+                  {{ u.display_name }}（{{ u.username }}）<template v-if="auth.user?.id === u.id">· 我</template>
+                </span>
+                <input
+                  type="checkbox"
+                  :checked="rosterSelectedIds.includes(u.id)"
+                  @change="setRosterUserSelected(u.id, $event.target.checked)"
                 />
               </label>
             </div>

@@ -145,11 +145,46 @@ textarea {
   background: var(--ios-bg-elevated);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  overflow: hidden;
+  /* 避免遮挡同行按钮、影响内嵌 select 在移动端的展开 */
+  overflow: visible;
 }
 
 .card-pad {
   padding: 16px 18px;
+}
+
+/* 输入框与按钮同一行时，勿用默认 width:100% 的 .btn，否则会挤掉输入框 */
+.form-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.form-row .input,
+.form-row .select {
+  flex: 1;
+  min-width: 0;
+}
+.form-row .btn {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 72px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.form-row--equal .btn {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 列表行右侧操作按钮（勿占满整行） */
+.list-cell .btn {
+  width: auto;
+  flex-shrink: 0;
+  min-width: 72px;
+  padding-left: 14px;
+  padding-right: 14px;
 }
 
 .grouped-list {
@@ -297,6 +332,71 @@ textarea {
 .pill-ended {
   background: rgba(60, 60, 67, 0.1);
   color: var(--ios-secondary);
+}
+
+.pill-checked-in {
+  background: rgba(52, 199, 89, 0.18);
+  color: var(--ios-green);
+}
+
+/* 参与者活动列表：按钮 flex（内区 + chevron）；内区 grid 固定 58% / 38% 列，避免标签多少挤压时间 */
+.list-cell.participant-session-list__row-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.participant-session-list__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 58%) minmax(96px, 38%);
+  align-items: center;
+  column-gap: 10px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  /* 与已签到行的绿条占位一致，避免有无绿条时标题左缘不齐 */
+  padding-left: 10px;
+}
+
+.participant-session-list__main {
+  min-width: 0;
+  text-align: left;
+}
+
+.participant-session-list__main .list-cell__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-session-list__time {
+  font-size: 14px;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.participant-session-list__tags {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* 已签到：短竖条画在统一留白区内（与 .participant-session-list__inner 的 padding-left 对齐） */
+.participant-session-list__inner--done::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 90%;
+  min-height: 20px;
+  border-radius: 2px;
+  background: var(--ios-green);
+  pointer-events: none;
 }
 
 .pill-cancelled {

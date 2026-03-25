@@ -14,7 +14,41 @@ export function initDb() {
   db = new DatabaseSync(path)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
   createTables()
+  migrateSessionsRosterOrgs()
+  migrateOrganizationsJoinPolicy()
   seedIfEmpty()
+}
+
+function migrateOrganizationsJoinPolicy() {
+  try {
+    db.exec(
+      `ALTER TABLE organizations ADD COLUMN join_policy TEXT NOT NULL DEFAULT 'open' CHECK (join_policy IN ('open', 'approval', 'invite_only'))`
+    )
+  } catch {
+    /* 列已存在 */
+  }
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS organization_join_requests (
+        org_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, user_id),
+        FOREIGN KEY (org_id) REFERENCES organizations(id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `)
+  } catch {
+    /* 表已存在 */
+  }
+}
+
+function migrateSessionsRosterOrgs() {
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN roster_org_ids TEXT NOT NULL DEFAULT '[]'`)
+  } catch {
+    /* 列已存在 */
+  }
 }
 
 export function getSqlite() {
@@ -79,6 +113,37 @@ function createTables() {
 
     CREATE INDEX IF NOT EXISTS idx_sessions_org ON sessions(organizer_id);
     CREATE INDEX IF NOT EXISTS idx_records_session ON checkin_records(session_id);
+
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      invite_code_hash TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      join_policy TEXT NOT NULL DEFAULT 'open' CHECK (join_policy IN ('open', 'approval', 'invite_only')),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS organization_join_requests (
+      org_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, user_id),
+      FOREIGN KEY (org_id) REFERENCES organizations(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS organization_members (
+      org_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, user_id),
+      FOREIGN KEY (org_id) REFERENCES organizations(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);
   `)
 }
 
@@ -99,6 +164,7 @@ export function hydrateSession(row) {
     cancelled: !!row.cancelled,
     allowed_user_ids: parseJsonField(row.allowed_user_ids, []),
     joined_user_ids: parseJsonField(row.joined_user_ids, []),
+    roster_org_ids: parseJsonField(row.roster_org_ids, []),
   }
 }
 
@@ -123,6 +189,27 @@ export function findUserById(id) {
   return u || null
 }
 
+/** 模糊匹配用户名或显示名，供管理员点选添加（避免重名昵称歧义） */
+export function searchUsersForOrgInvite(rawQuery, orgId, limit = 20) {
+  const q = typeof rawQuery === 'string' ? rawQuery.trim() : ''
+  if (q.length < 2) return []
+  const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+  const like = `%${esc}%`
+  return getSqlite()
+    .prepare(
+      `SELECT u.id, u.username, u.display_name
+       FROM users u
+       WHERE (u.username LIKE ? ESCAPE '\\' OR u.display_name LIKE ? ESCAPE '\\')
+         AND NOT EXISTS (
+           SELECT 1 FROM organization_members m
+           WHERE m.org_id = ? AND m.user_id = u.id
+         )
+       ORDER BY u.username COLLATE NOCASE
+       LIMIT ?`
+    )
+    .all(like, like, orgId, limit)
+}
+
 export function countUsers() {
   return getSqlite().prepare('SELECT COUNT(*) AS c FROM users').get().c
 }
@@ -134,14 +221,6 @@ export function insertUser({ id, username, passwordHash, displayName, role, crea
        VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(id, username, passwordHash, displayName, role, createdAt)
-}
-
-export function listParticipantUsers() {
-  return getSqlite()
-    .prepare(
-      `SELECT id, username, display_name FROM users WHERE role = 'participant' ORDER BY display_name COLLATE NOCASE`
-    )
-    .all()
 }
 
 export function listAllSessionsRaw() {
@@ -157,8 +236,8 @@ export function insertSession(s) {
   getSqlite()
     .prepare(
       `INSERT INTO sessions (id, title, organizer_id, starts_at, ends_at, checkin_modes, cancelled,
-        participant_scope, allowed_user_ids, joined_user_ids, invite_code_hash, geo_config, qr_config, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        participant_scope, allowed_user_ids, joined_user_ids, invite_code_hash, geo_config, qr_config, created_at, roster_org_ids)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       s.id,
       s.title,
@@ -173,7 +252,8 @@ export function insertSession(s) {
       s.invite_code_hash ?? null,
       s.geo_config ?? null,
       s.qr_config ?? null,
-      s.created_at
+      s.created_at,
+      JSON.stringify(s.roster_org_ids || [])
     )
 }
 
@@ -182,7 +262,7 @@ export function updateSessionRow(s) {
     .prepare(
       `UPDATE sessions SET title=?, starts_at=?, ends_at=?, checkin_modes=?, cancelled=?,
         participant_scope=?, allowed_user_ids=?, joined_user_ids=?, invite_code_hash=?,
-        geo_config=?, qr_config=? WHERE id=?`
+        geo_config=?, qr_config=?, roster_org_ids=? WHERE id=?`
     ).run(
       s.title,
       s.starts_at,
@@ -195,6 +275,7 @@ export function updateSessionRow(s) {
       s.invite_code_hash ?? null,
       s.geo_config ?? null,
       s.qr_config ?? null,
+      JSON.stringify(s.roster_org_ids || []),
       s.id
     )
 }
@@ -257,6 +338,19 @@ export function findSuccessfulCheckin(sessionId, userId) {
     .get(sessionId, userId)
 }
 
+/** 批量查询：当前用户在哪些活动已有成功签到记录 */
+export function sessionIdsWithSuccessfulCheckinForUser(userId, sessionIds) {
+  if (!sessionIds?.length) return new Set()
+  const placeholders = sessionIds.map(() => '?').join(',')
+  const rows = getSqlite()
+    .prepare(
+      `SELECT DISTINCT session_id FROM checkin_records
+       WHERE user_id = ? AND success = 1 AND session_id IN (${placeholders})`
+    )
+    .all(userId, ...sessionIds)
+  return new Set(rows.map((r) => r.session_id))
+}
+
 export function findCheckinById(id) {
   return getSqlite().prepare('SELECT * FROM checkin_records WHERE id = ?').get(id)
 }
@@ -265,13 +359,168 @@ export function listCheckinsForSession(sessionId) {
   return getSqlite().prepare('SELECT * FROM checkin_records WHERE session_id = ?').all(sessionId)
 }
 
+export function normalizeJoinPolicy(p) {
+  if (p === 'approval' || p === 'invite_only') return p
+  return 'open'
+}
+
+export function insertOrganization({ id, name, inviteCodeHash, createdBy, createdAt, joinPolicy }) {
+  const policy = normalizeJoinPolicy(joinPolicy ?? 'open')
+  getSqlite()
+    .prepare(
+      `INSERT INTO organizations (id, name, invite_code_hash, created_by, created_at, join_policy) VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(id, name, inviteCodeHash, createdBy, createdAt, policy)
+}
+
+export function getOrganizationById(id) {
+  return getSqlite().prepare('SELECT * FROM organizations WHERE id = ?').get(id) || null
+}
+
+export function deleteOrganizationById(orgId) {
+  getSqlite().prepare('DELETE FROM organization_join_requests WHERE org_id = ?').run(orgId)
+  getSqlite().prepare('DELETE FROM organization_members WHERE org_id = ?').run(orgId)
+  getSqlite().prepare('DELETE FROM organizations WHERE id = ?').run(orgId)
+}
+
+export function addOrganizationMember(orgId, userId, role, joinedAt) {
+  getSqlite()
+    .prepare(`INSERT INTO organization_members (org_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)`)
+    .run(orgId, userId, role, joinedAt)
+}
+
+export function getOrgMemberRole(orgId, userId) {
+  const r = getSqlite()
+    .prepare('SELECT role FROM organization_members WHERE org_id = ? AND user_id = ?')
+    .get(orgId, userId)
+  return r?.role ?? null
+}
+
+export function countOrgMembers(orgId) {
+  return getSqlite().prepare('SELECT COUNT(*) AS c FROM organization_members WHERE org_id = ?').get(orgId).c
+}
+
+export function listOrganizationsForUser(userId) {
+  return getSqlite()
+    .prepare(
+      `SELECT o.id, o.name, o.created_at, m.role AS my_role, m.joined_at
+       FROM organizations o
+       INNER JOIN organization_members m ON m.org_id = o.id AND m.user_id = ?
+       ORDER BY o.name COLLATE NOCASE`
+    )
+    .all(userId)
+}
+
+export function listOrgMembersWithProfile(orgId) {
+  return getSqlite()
+    .prepare(
+      `SELECT u.id, u.username, u.display_name, m.role, m.joined_at
+       FROM organization_members m
+       INNER JOIN users u ON u.id = m.user_id
+       WHERE m.org_id = ?
+       ORDER BY u.display_name COLLATE NOCASE`
+    )
+    .all(orgId)
+}
+
+export function removeOrganizationMember(orgId, userId) {
+  getSqlite().prepare('DELETE FROM organization_members WHERE org_id = ? AND user_id = ?').run(orgId, userId)
+}
+
+export function setOrgMemberRole(orgId, userId, role) {
+  getSqlite()
+    .prepare('UPDATE organization_members SET role = ? WHERE org_id = ? AND user_id = ?')
+    .run(role, orgId, userId)
+}
+
+export function updateOrganizationName(orgId, name) {
+  getSqlite().prepare('UPDATE organizations SET name = ? WHERE id = ?').run(name, orgId)
+}
+
+export function updateOrganizationInviteHash(orgId, hash) {
+  getSqlite().prepare('UPDATE organizations SET invite_code_hash = ? WHERE id = ?').run(hash, orgId)
+}
+
+export function updateOrganizationJoinPolicy(orgId, policy) {
+  getSqlite()
+    .prepare('UPDATE organizations SET join_policy = ? WHERE id = ?')
+    .run(normalizeJoinPolicy(policy), orgId)
+}
+
+export function getJoinRequest(orgId, userId) {
+  return (
+    getSqlite()
+      .prepare('SELECT org_id, user_id, created_at FROM organization_join_requests WHERE org_id = ? AND user_id = ?')
+      .get(orgId, userId) || null
+  )
+}
+
+export function insertJoinRequest(orgId, userId, createdAt) {
+  getSqlite()
+    .prepare('INSERT INTO organization_join_requests (org_id, user_id, created_at) VALUES (?, ?, ?)')
+    .run(orgId, userId, createdAt)
+}
+
+export function deleteJoinRequest(orgId, userId) {
+  getSqlite().prepare('DELETE FROM organization_join_requests WHERE org_id = ? AND user_id = ?').run(orgId, userId)
+}
+
+export function listPendingJoinRequestsWithProfile(orgId) {
+  return getSqlite()
+    .prepare(
+      `SELECT r.user_id, r.created_at, u.username, u.display_name
+       FROM organization_join_requests r
+       INNER JOIN users u ON u.id = r.user_id
+       WHERE r.org_id = ?
+       ORDER BY r.created_at ASC`
+    )
+    .all(orgId)
+}
+
+/** 与明文加入码匹配的所有组织（相同明文在不同组织会存成不同 bcrypt 盐，但都会校验通过） */
+export function findOrganizationIdsByJoinCode(plain) {
+  const rows = getSqlite().prepare('SELECT id, invite_code_hash FROM organizations').all()
+  const ids = []
+  for (const r of rows) {
+    if (r.invite_code_hash && bcrypt.compareSync(plain, r.invite_code_hash)) ids.push(r.id)
+  }
+  return ids
+}
+
+/** 明文加入码是否已被任一组织使用（新建/换码时排除当前组织自身） */
+export function isPlainJoinCodeTaken(plain, excludeOrgId = null) {
+  const ids = findOrganizationIdsByJoinCode(plain)
+  if (excludeOrgId == null) return ids.length > 0
+  return ids.some((id) => id !== excludeOrgId)
+}
+
+export function unionMemberIdsForOrgs(orgIds) {
+  if (!orgIds?.length) return new Set()
+  const placeholders = orgIds.map(() => '?').join(',')
+  const rows = getSqlite()
+    .prepare(
+      `SELECT DISTINCT user_id FROM organization_members WHERE org_id IN (${placeholders})`
+    )
+    .all(...orgIds)
+  return new Set(rows.map((r) => r.user_id))
+}
+
+export function userMemberOfAllOrgs(userId, orgIds) {
+  if (!orgIds?.length) return false
+  for (const oid of orgIds) {
+    if (!getOrgMemberRole(oid, userId)) return false
+  }
+  return true
+}
+
 function seedIfEmpty() {
   if (countUsers() > 0) return
   const now = new Date().toISOString()
-  const orgId = randomUUID()
-  const partId = randomUUID()
+  const organizerUserId = randomUUID()
+  const aliceId = randomUUID()
+  const bobId = randomUUID()
   insertUser({
-    id: orgId,
+    id: organizerUserId,
     username: 'organizer',
     passwordHash: bcrypt.hashSync('organizer123', 10),
     displayName: '活动组织者',
@@ -279,7 +528,7 @@ function seedIfEmpty() {
     createdAt: now,
   })
   insertUser({
-    id: partId,
+    id: aliceId,
     username: 'alice',
     passwordHash: bcrypt.hashSync('alice123', 10),
     displayName: '参与者 Alice',
@@ -287,11 +536,22 @@ function seedIfEmpty() {
     createdAt: now,
   })
   insertUser({
-    id: randomUUID(),
+    id: bobId,
     username: 'bob',
     passwordHash: bcrypt.hashSync('bob123', 10),
     displayName: '参与者 Bob',
     role: 'participant',
     createdAt: now,
   })
+  const demoOrgId = randomUUID()
+  insertOrganization({
+    id: demoOrgId,
+    name: '演示组织',
+    inviteCodeHash: bcrypt.hashSync('DEMO2026', 10),
+    createdBy: organizerUserId,
+    createdAt: now,
+  })
+  addOrganizationMember(demoOrgId, organizerUserId, 'owner', now)
+  addOrganizationMember(demoOrgId, aliceId, 'member', now)
+  addOrganizationMember(demoOrgId, bobId, 'member', now)
 }

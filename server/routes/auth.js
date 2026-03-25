@@ -10,7 +10,7 @@ const router = Router()
 const USERNAME_RE = /^[a-zA-Z0-9_\u4e00-\u9fa5]{2,32}$/
 
 router.post('/register', (req, res) => {
-  const { username, password, display_name, organizer_invite_code } = req.body || {}
+  const { username, password, display_name } = req.body || {}
   const name = typeof username === 'string' ? username.trim() : ''
   const pass = typeof password === 'string' ? password : ''
   const disp = typeof display_name === 'string' ? display_name.trim() : ''
@@ -31,10 +31,7 @@ router.post('/register', (req, res) => {
     return fail(res, 409, 'username_taken', '该用户名已被注册')
   }
 
-  const secret = (process.env.ORGANIZER_REGISTER_CODE || '').trim()
-  const wantsOrg =
-    typeof organizer_invite_code === 'string' && organizer_invite_code.trim() === secret && secret.length > 0
-  const role = wantsOrg ? 'organizer' : 'participant'
+  const role = 'participant'
 
   const id = randomUUID()
   const now = new Date().toISOString()

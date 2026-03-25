@@ -119,28 +119,41 @@ function open(id) {
       <div v-if="error" class="banner-error">{{ error }}</div>
       <div v-if="loading" class="spinner-wrap muted">加载中…</div>
 
-      <div v-else-if="!sessions.length" class="card card-pad muted">
-        下方暂无活动。邀请制可在上方填写编号与邀请码加入；名单制需组织者在名单中勾选你；公开活动会直接出现在列表中。
-      </div>
+      <template v-else-if="sessions.length">
+        <p class="muted" style="font-size: 13px; margin-bottom: 10px; line-height: 1.4">
+          已成功签到的活动带有<strong>绿色「已签到」</strong>标签与<strong>左侧短绿条</strong>（居中、约占行高 90%），可与尚未签到的活动区分。
+        </p>
+        <div class="grouped-list">
+          <button
+            v-for="s in sessions"
+            :key="s.id"
+            type="button"
+            class="list-cell chevron participant-session-list__row-btn"
+            style="width: 100%; border: none; text-align: left"
+            @click="open(s.id)"
+          >
+            <div
+              class="participant-session-list__inner"
+              :class="{ 'participant-session-list__inner--done': s.has_checked_in }"
+            >
+              <div class="participant-session-list__main">
+                <div class="list-cell__title">{{ s.title }}</div>
+                <div class="participant-session-list__time muted">
+                  {{ formatLocal(s.starts_at) }} — {{ formatLocal(s.ends_at) }}
+                </div>
+              </div>
+              <div class="participant-session-list__tags">
+                <span v-if="s.has_checked_in" class="pill pill-checked-in">已签到</span>
+                <span v-if="scopeLabel(s)" class="pill pill-ended">{{ scopeLabel(s) }}</span>
+                <span :class="['pill', statusPill(s).cls]">{{ statusPill(s).text }}</span>
+              </div>
+            </div>
+          </button>
+        </div>
+      </template>
 
-      <div v-else class="grouped-list">
-        <button
-          v-for="s in sessions"
-          :key="s.id"
-          type="button"
-          class="list-cell chevron"
-          style="width: 100%; border: none; text-align: left"
-          @click="open(s.id)"
-        >
-          <div>
-            <div class="list-cell__title">{{ s.title }}</div>
-            <div class="muted" style="font-size: 14px; margin-top: 4px">{{ formatLocal(s.starts_at) }} — {{ formatLocal(s.ends_at) }}</div>
-          </div>
-          <span style="display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end">
-            <span v-if="scopeLabel(s)" class="pill pill-ended">{{ scopeLabel(s) }}</span>
-            <span :class="['pill', statusPill(s).cls]">{{ statusPill(s).text }}</span>
-          </span>
-        </button>
+      <div v-else class="card card-pad muted">
+        下方暂无活动。邀请制可在上方填写编号与邀请码加入；名单制需组织者在名单中勾选你。
       </div>
     </div>
   </div>

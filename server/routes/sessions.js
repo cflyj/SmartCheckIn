@@ -13,12 +13,15 @@ import {
   deleteQrState,
   insertCheckinRecord,
   findSuccessfulCheckin,
+  sessionIdsWithSuccessfulCheckinForUser,
   findCheckinById,
   listCheckinsForSession,
   appendJoinedUser,
+  unionMemberIdsForOrgs,
+  userMemberOfAllOrgs,
 } from '../db.js'
 import { ok, fail } from '../utils/response.js'
-import { authRequired, requireOrganizer } from '../middleware/auth.js'
+import { authRequired } from '../middleware/auth.js'
 import { haversineMeters } from '../utils/geo.js'
 import {
   defaultQrConfig,
@@ -43,6 +46,11 @@ function normalizeScope(s) {
   return 'open'
 }
 
+/** 新建活动仅允许名单制 / 邀请码制 */
+function scopeForCreate(s) {
+  return s === 'roster' || s === 'invite' ? s : null
+}
+
 function canAttendSession(row, user) {
   if (!row || row.cancelled) return false
   const scope = normalizeScope(row.participant_scope)
@@ -56,12 +64,13 @@ function canAttendSession(row, user) {
 }
 
 function isSessionOwner(row, user) {
-  return user.role === 'organizer' && row.organizer_id === user.id
+  return row.organizer_id === user.id
 }
 
 function participantListedSession(row, user) {
   const scope = normalizeScope(row.participant_scope)
-  if (scope === 'open') return true
+  // 不再在「可参加活动」列表里展示历史「任何人可签到」活动，减少无关打扰（仍可通过直链访问与签到）
+  if (scope === 'open') return false
   if (scope === 'roster') return (row.allowed_user_ids || []).includes(user.id)
   // 邀请制：未加入也应出现在列表，进入详情页输入口令后加入（与 GET /:id 的 join_required 一致）
   if (scope === 'invite') return true
@@ -91,6 +100,7 @@ function mapSessionDetail(reqUser, row, extra = {}) {
   if (isSessionOwner(row, reqUser)) {
     base.allowed_user_ids = [...(row.allowed_user_ids || [])]
     base.joined_user_ids = [...(row.joined_user_ids || [])]
+    base.roster_org_ids = [...(row.roster_org_ids || [])]
     base.has_invite_code = normalizeScope(row.participant_scope) === 'invite' && !!row.invite_code_hash
   }
   return base
@@ -100,14 +110,19 @@ function loadSession(id) {
   return getSessionById(id)
 }
 
-function listSessionsForUser(user) {
+function listSessionsHosted(user) {
   const all = getSqlite()
     .prepare('SELECT * FROM sessions WHERE cancelled = 0')
     .all()
     .map(hydrateSession)
-  if (user.role === 'organizer') {
-    return all.filter((s) => s.organizer_id === user.id)
-  }
+  return all.filter((s) => s.organizer_id === user.id)
+}
+
+function listSessionsAttendable(user) {
+  const all = getSqlite()
+    .prepare('SELECT * FROM sessions WHERE cancelled = 0')
+    .all()
+    .map(hydrateSession)
   return all.filter((s) => participantListedSession(s, user))
 }
 
@@ -146,7 +161,7 @@ function assertCanCheckIn(req, res, row) {
       res,
       403,
       'organizer_not_in_roster',
-      '你是组织者但未满足本活动的参与条件（例如名单制未包含你，或邀请制需先输入邀请码）。'
+      '你是活动发起者但未满足参与条件（例如名单制未包含你，或邀请制需先输入活动邀请码）。'
     )
     return true
   }
@@ -159,18 +174,28 @@ function assertCanCheckIn(req, res, row) {
   return true
 }
 
-function validateRosterIds(allowedIds, organizerId) {
+function validateRosterIds(allowedIds) {
   if (!Array.isArray(allowedIds) || allowedIds.length === 0) {
     return '名单模式下至少选择一名成员，或勾选「我也参与签到」'
   }
   const uniq = [...new Set(allowedIds)]
-  const userMap = new Map(getSqlite().prepare('SELECT id, role FROM users').all().map((u) => [u.id, u.role]))
+  const userMap = new Map(getSqlite().prepare('SELECT id FROM users').all().map((u) => [u.id, true]))
   for (const uid of uniq) {
-    const r = userMap.get(uid)
-    if (!r) return '存在无效的用户'
-    if (r === 'participant') continue
-    if (r === 'organizer' && uid === organizerId) continue
-    return '名单中只能包含参与者账号，或你自己（组织者）'
+    if (!userMap.get(uid)) return '存在无效的用户'
+  }
+  return null
+}
+
+/** 名单中所有人须属于所选组织并集；发起者须为每个所选组织的成员 */
+function validateRosterWithOrgs(allowedIds, rosterOrgIds, organizerId) {
+  const err = validateRosterIds(allowedIds)
+  if (err) return err
+  const orgIds = Array.isArray(rosterOrgIds) ? [...new Set(rosterOrgIds.map(String).filter(Boolean))] : []
+  if (orgIds.length === 0) return '名单制需至少选择一个组织，用于限定可选签到成员范围'
+  if (!userMemberOfAllOrgs(organizerId, orgIds)) return '你只能从你已加入的组织中选择范围'
+  const pool = unionMemberIdsForOrgs(orgIds)
+  for (const uid of [...new Set(allowedIds)]) {
+    if (!pool.has(uid)) return '名单中有人不在所选组织的成员范围内'
   }
   return null
 }
@@ -178,12 +203,20 @@ function validateRosterIds(allowedIds, organizerId) {
 router.use(authRequired)
 
 router.get('/', (req, res) => {
-  const rows = listSessionsForUser(req.user)
+  const mine = req.query.mine === '1' || req.query.mine === 'true'
+  const rows = mine ? listSessionsHosted(req.user) : listSessionsAttendable(req.user)
   rows.sort((a, b) => new Date(b.starts_at) - new Date(a.starts_at))
-  ok(res, { sessions: rows.map(mapSessionRow) })
+  const sessionIds = rows.map((r) => r.id)
+  const checkedInSet = sessionIdsWithSuccessfulCheckinForUser(req.user.id, sessionIds)
+  ok(res, {
+    sessions: rows.map((row) => ({
+      ...mapSessionRow(row),
+      has_checked_in: checkedInSet.has(row.id),
+    })),
+  })
 })
 
-router.post('/', requireOrganizer, (req, res) => {
+router.post('/', (req, res) => {
   const {
     title,
     starts_at,
@@ -194,6 +227,7 @@ router.post('/', requireOrganizer, (req, res) => {
     participant_scope: scopeIn,
     allowed_user_ids: allowedIn,
     invite_code: invitePlain,
+    roster_org_ids: rosterOrgIdsIn,
   } = req.body || {}
 
   if (!title || !starts_at || !ends_at || !checkin_modes) {
@@ -203,22 +237,31 @@ router.post('/', requireOrganizer, (req, res) => {
     return fail(res, 422, 'validation_error', '签到方式须为 GEO、QR 或 BOTH')
   }
 
-  const participant_scope = normalizeScope(scopeIn)
+  const participant_scope = scopeForCreate(scopeIn)
+  if (!participant_scope) {
+    return fail(
+      res,
+      422,
+      'validation_error',
+      '请选择「仅指定成员」或「邀请码」；已不再提供「任何人可签到」，避免无关用户收到干扰'
+    )
+  }
   let allowed_user_ids = Array.isArray(allowedIn) ? [...new Set(allowedIn)] : []
+  let roster_org_ids = Array.isArray(rosterOrgIdsIn) ? [...new Set(rosterOrgIdsIn.map(String).filter(Boolean))] : []
   let joined_user_ids = []
   let invite_code_hash = null
 
   if (participant_scope === 'roster') {
-    const err = validateRosterIds(allowed_user_ids, req.user.id)
+    const err = validateRosterWithOrgs(allowed_user_ids, roster_org_ids, req.user.id)
     if (err) return fail(res, 422, 'validation_error', err)
-  } else if (participant_scope === 'invite') {
+  } else {
     const code = typeof invitePlain === 'string' ? invitePlain.trim() : ''
     if (code.length < 4) {
       return fail(res, 422, 'validation_error', '邀请码至少 4 位，请设置后告知参与者')
     }
     invite_code_hash = bcrypt.hashSync(code, 10)
     joined_user_ids = [req.user.id]
-  } else {
+    roster_org_ids = []
     allowed_user_ids = []
   }
 
@@ -255,6 +298,7 @@ router.post('/', requireOrganizer, (req, res) => {
       geo_config: geoJson,
       qr_config: qrJson,
       created_at: now,
+      roster_org_ids,
     })
     if (hasQr(checkin_modes)) {
       rotateQrForSession(id, qrMerged)
@@ -266,7 +310,7 @@ router.post('/', requireOrganizer, (req, res) => {
   }
 })
 
-router.put('/:id', requireOrganizer, (req, res) => {
+router.put('/:id', (req, res) => {
   const row = loadSession(req.params.id)
   if (!row || row.organizer_id !== req.user.id) {
     return fail(res, 404, 'session_not_found', '活动不存在')
@@ -283,6 +327,7 @@ router.put('/:id', requireOrganizer, (req, res) => {
     participant_scope: scopeIn,
     allowed_user_ids: allowedIn,
     invite_code: invitePlain,
+    roster_org_ids: rosterOrgIdsBody,
   } = req.body || {}
 
   const modes = checkin_modes || row.checkin_modes
@@ -290,9 +335,17 @@ router.put('/:id', requireOrganizer, (req, res) => {
     return fail(res, 422, 'validation_error', '签到方式无效')
   }
 
+  if (scopeIn === 'open') {
+    return fail(
+      res,
+      422,
+      'validation_error',
+      '已不再支持「任何人可签到」，请改为「仅指定成员」或「邀请码」'
+    )
+  }
   const participant_scope =
-    scopeIn === 'roster' || scopeIn === 'invite' || scopeIn === 'open'
-      ? normalizeScope(scopeIn)
+    scopeIn === 'roster' || scopeIn === 'invite'
+      ? scopeIn
       : normalizeScope(row.participant_scope)
 
   let allowed_user_ids = row.allowed_user_ids || []
@@ -302,13 +355,18 @@ router.put('/:id', requireOrganizer, (req, res) => {
 
   let joined_user_ids = [...(row.joined_user_ids || [])]
   let invite_code_hash = row.invite_code_hash
+  let roster_org_ids = [...(row.roster_org_ids || [])]
 
   if (participant_scope === 'roster') {
-    const err = validateRosterIds(allowed_user_ids, req.user.id)
+    if (Array.isArray(rosterOrgIdsBody)) {
+      roster_org_ids = [...new Set(rosterOrgIdsBody.map(String).filter(Boolean))]
+    }
+    const err = validateRosterWithOrgs(allowed_user_ids, roster_org_ids, req.user.id)
     if (err) return fail(res, 422, 'validation_error', err)
     invite_code_hash = null
   } else if (participant_scope === 'invite') {
     allowed_user_ids = []
+    roster_org_ids = []
     if (!joined_user_ids.includes(req.user.id)) joined_user_ids.push(req.user.id)
     if (typeof invitePlain === 'string' && invitePlain.trim().length >= 4) {
       invite_code_hash = bcrypt.hashSync(invitePlain.trim(), 10)
@@ -317,9 +375,13 @@ router.put('/:id', requireOrganizer, (req, res) => {
       return fail(res, 422, 'validation_error', '邀请制需设置邀请码（至少 4 位），或保留原邀请码不填新码时勿清空')
     }
   } else {
-    allowed_user_ids = []
-    invite_code_hash = null
-    joined_user_ids = []
+    /* 历史 participant_scope === open：未改为 roster/invite 时保留原字段，避免误清空 */
+    if (Array.isArray(allowedIn)) allowed_user_ids = [...new Set(allowedIn)]
+    if (Array.isArray(rosterOrgIdsBody)) {
+      roster_org_ids = [...new Set(rosterOrgIdsBody.map(String).filter(Boolean))]
+    }
+    invite_code_hash = row.invite_code_hash
+    joined_user_ids = [...(row.joined_user_ids || [])]
   }
 
   let geoJson = row.geo_config
@@ -353,6 +415,7 @@ router.put('/:id', requireOrganizer, (req, res) => {
   row.allowed_user_ids = allowed_user_ids
   row.joined_user_ids = joined_user_ids
   row.invite_code_hash = invite_code_hash
+  row.roster_org_ids = roster_org_ids
   row.geo_config = geoJson
   row.qr_config = qrJson
 
@@ -383,7 +446,7 @@ router.post('/:id/join', (req, res) => {
   ok(res, { session: mapSessionDetail(req.user, loadSession(row.id)), joined: true })
 })
 
-router.get('/:id/qr/current', requireOrganizer, (req, res) => {
+router.get('/:id/qr/current', (req, res) => {
   const row = loadSession(req.params.id)
   if (!row || row.organizer_id !== req.user.id) {
     return fail(res, 404, 'session_not_found', '活动不存在')
@@ -568,7 +631,7 @@ router.post('/:id/checkin/qr', (req, res) => {
   ok(res, { record: formatRecord(created), already_checked_in: false })
 })
 
-router.get('/:id/stats', requireOrganizer, (req, res) => {
+router.get('/:id/stats', (req, res) => {
   const row = loadSession(req.params.id)
   if (!row || row.organizer_id !== req.user.id) {
     return fail(res, 404, 'session_not_found', '活动不存在')
@@ -601,7 +664,7 @@ router.get('/:id/stats', requireOrganizer, (req, res) => {
   })
 })
 
-router.get('/:id/records', requireOrganizer, (req, res) => {
+router.get('/:id/records', (req, res) => {
   const row = loadSession(req.params.id)
   if (!row || row.organizer_id !== req.user.id) {
     return fail(res, 404, 'session_not_found', '活动不存在')
@@ -629,7 +692,7 @@ router.get('/:id/records', requireOrganizer, (req, res) => {
   ok(res, { records, page, limit })
 })
 
-router.get('/:id/export', requireOrganizer, (req, res) => {
+router.get('/:id/export', (req, res) => {
   const row = loadSession(req.params.id)
   if (!row || row.organizer_id !== req.user.id) {
     return fail(res, 404, 'session_not_found', '活动不存在')

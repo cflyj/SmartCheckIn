@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import { initDb } from './db.js'
 import authRouter from './routes/auth.js'
 import usersRouter from './routes/users.js'
+import orgsRouter from './routes/orgs.js'
 import sessionsRouter from './routes/sessions.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -28,6 +29,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
+app.use('/api/orgs', orgsRouter)
 app.use('/api/sessions', sessionsRouter)
 
 if (process.env.NODE_ENV === 'production') {

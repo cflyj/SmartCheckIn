@@ -52,7 +52,7 @@
 | 校验 | `zod` / `joi` MAY，对请求体做 schema 校验 |
 | 认证 | JWT（`jsonwebtoken`）或 session（`cookie` + `express-session`）MAY；与 §4 `auth_token` 一致即可 |
 | 持久化 | **Node.js 内置 `node:sqlite`**（`DatabaseSync`），文件默认 `server/app.db`；环境变量 `SQLITE_PATH` 可改路径。需 **Node 22+**（当前 LTS 即可） |
-| 注册 | `POST /api/auth/register` 默认注册为参与者；环境变量 **`ORGANIZER_REGISTER_CODE`** 与请求体 `organizer_invite_code` 一致时可注册为组织者 |
+| 注册 | `POST /api/auth/register` 默认注册为参与者；任意登录用户可发起活动（与组织、名单制见 §2.5.5） |
 | 活动邀请 | `participant_scope: invite` + 服务端存 `invite_code_hash`；`POST /api/sessions/:id/join` 校验口令后加入 `joined_user_ids` |
 | 测试 | `node:test` 或 `vitest`（仅测 Node 逻辑）+ 对 Haversine、QR 校验写单元测试 |
 
@@ -85,6 +85,14 @@ SmartCheckIn/
 | `PORT` / `API_PORT` | Node 监听端口 |
 | `JWT_SECRET` | 签发/校验 token（若用 JWT） |
 | `DATABASE_URL` | 数据库连接串（若用 SQL） |
+
+### 2.5.5 组织（Organization）（MUST，名单制前置）
+
+- **实体**：`organizations`（名称、加入码哈希、创建者）、`organization_members`（`owner` / `admin` / `member`）。
+- **加入**：`POST /api/orgs/join` + 加入码（创建或重置时明文展示一次； bcrypt 存库）。
+- **退出**：普通成员 `POST /api/orgs/:id/leave`；**负责人**在仍有他人时须先 `POST /api/orgs/:id/transfer-owner`，仅一人时可退出并**解散组织**。
+- **管理**：负责人/管理员可改名、重置加入码、`POST /api/orgs/:id/members` 按用户名拉人、`DELETE` 移除成员（不可直接移除负责人）。
+- **名单制活动**：请求体带 `roster_org_ids`（发起者须为其中每个组织的成员）；`allowed_user_ids` 必须全部属于所选组织的**成员并集**；服务端强制校验。
 
 ---
 

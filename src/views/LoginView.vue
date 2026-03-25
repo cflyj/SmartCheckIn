@@ -17,14 +17,12 @@ async function submit() {
   error.value = ''
   loading.value = true
   try {
-    const user = await auth.login(username.value.trim(), password.value)
+    await auth.login(username.value.trim(), password.value)
     const redir = route.query.redirect
     if (typeof redir === 'string' && redir.startsWith('/')) {
       router.replace(redir)
-    } else if (user.role === 'organizer') {
-      router.replace({ name: 'home' })
     } else {
-      router.replace({ name: 'participant-sessions' })
+      router.replace({ name: 'home' })
     }
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '登录失败'
@@ -38,7 +36,7 @@ async function submit() {
   <div class="page">
     <div class="content" style="padding-top: calc(24px + var(--safe-top))">
       <h1 class="headline">SmartCheckIn</h1>
-      <p class="subhead">使用账号登录。参与者仅可签到；组织者可创建活动并配置「谁能签到」。</p>
+      <p class="subhead">登录后可发起签到活动，也可参与他人活动。</p>
 
       <div v-if="error" class="banner-error">{{ error }}</div>
 
@@ -76,7 +74,7 @@ async function submit() {
 
       <p class="muted" style="margin-top: 24px; text-align: center; font-size: 13px">
         数据在服务器本地 SQLite（<code>server/app.db</code>）。演示账号：<code>organizer</code>/<code>organizer123</code>、
-        <code>alice</code>/<code>alice123</code>
+        <code>alice</code>/<code>alice123</code>；演示组织加入码：<code>DEMO2026</code>（空库种子自动创建）
       </p>
     </div>
   </div>

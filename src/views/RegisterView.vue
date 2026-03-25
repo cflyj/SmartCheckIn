@@ -11,7 +11,6 @@ const username = ref('')
 const password = ref('')
 const password2 = ref('')
 const displayName = ref('')
-const organizerCode = ref('')
 const loading = ref(false)
 const error = ref('')
 
@@ -23,17 +22,12 @@ async function submit() {
   }
   loading.value = true
   try {
-    const user = await auth.register({
+    await auth.register({
       username: username.value.trim(),
       password: password.value,
       display_name: displayName.value.trim(),
-      organizer_invite_code: organizerCode.value.trim() || undefined,
     })
-    if (user.role === 'organizer') {
-      router.replace({ name: 'home' })
-    } else {
-      router.replace({ name: 'participant-sessions' })
-    }
+    router.replace({ name: 'home' })
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '注册失败'
   } finally {
@@ -46,7 +40,7 @@ async function submit() {
   <div class="page">
     <div class="content" style="padding-top: calc(24px + var(--safe-top))">
       <h1 class="headline">注册</h1>
-      <p class="subhead">默认注册为参与者。若持有开发者发放的「组织者邀请码」，可填下方升级为组织者。</p>
+      <p class="subhead">注册后可发起自己的签到活动，也可参与他人活动。</p>
 
       <div v-if="error" class="banner-error">{{ error }}</div>
 
@@ -63,19 +57,9 @@ async function submit() {
           <label for="reg-p">密码（至少 8 位）</label>
           <input id="reg-p" v-model="password" class="input" type="password" autocomplete="new-password" />
         </div>
-        <div class="field">
+        <div class="field" style="margin-bottom: 0">
           <label for="reg-p2">确认密码</label>
           <input id="reg-p2" v-model="password2" class="input" type="password" autocomplete="new-password" />
-        </div>
-        <div class="field" style="margin-bottom: 0">
-          <label for="reg-o">组织者邀请码（可选）</label>
-          <input
-            id="reg-o"
-            v-model="organizerCode"
-            class="input"
-            autocomplete="off"
-            placeholder="仅组织者需要，与活动邀请码不同"
-          />
         </div>
       </div>
 
