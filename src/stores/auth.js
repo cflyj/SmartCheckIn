@@ -1,0 +1,44 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { api } from '../api/client.js'
+
+export const useAuthStore = defineStore('auth', () => {
+  const token = ref(localStorage.getItem('token') || '')
+  const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
+
+  const isLoggedIn = computed(() => !!token.value)
+  const isOrganizer = computed(() => user.value?.role === 'organizer')
+
+  function setSession(t, u) {
+    token.value = t
+    user.value = u
+    if (t) localStorage.setItem('token', t)
+    else localStorage.removeItem('token')
+    if (u) localStorage.setItem('user', JSON.stringify(u))
+    else localStorage.removeItem('user')
+  }
+
+  async function login(username, password) {
+    const data = await api('/auth/login', {
+      method: 'POST',
+      body: { username, password },
+    })
+    setSession(data.token, data.user)
+    return data.user
+  }
+
+  async function register(payload) {
+    const data = await api('/auth/register', {
+      method: 'POST',
+      body: payload,
+    })
+    setSession(data.token, data.user)
+    return data.user
+  }
+
+  function logout() {
+    setSession('', null)
+  }
+
+  return { token, user, isLoggedIn, isOrganizer, login, register, logout, setSession }
+})

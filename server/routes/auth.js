@@ -1,0 +1,84 @@
+import { Router } from 'express'
+import bcrypt from 'bcryptjs'
+import { randomUUID } from 'crypto'
+import { findUserByUsername, insertUser } from '../db.js'
+import { ok, fail } from '../utils/response.js'
+import { signToken } from '../middleware/auth.js'
+
+const router = Router()
+
+const USERNAME_RE = /^[a-zA-Z0-9_\u4e00-\u9fa5]{2,32}$/
+
+router.post('/register', (req, res) => {
+  const { username, password, display_name, organizer_invite_code } = req.body || {}
+  const name = typeof username === 'string' ? username.trim() : ''
+  const pass = typeof password === 'string' ? password : ''
+  const disp = typeof display_name === 'string' ? display_name.trim() : ''
+
+  if (!name || !pass || !disp) {
+    return fail(res, 422, 'validation_error', '请填写用户名、密码与显示名称')
+  }
+  if (!USERNAME_RE.test(name)) {
+    return fail(res, 422, 'validation_error', '用户名为 2～32 位字母、数字、下划线或中文')
+  }
+  if (pass.length < 8) {
+    return fail(res, 422, 'validation_error', '密码至少 8 位')
+  }
+  if (disp.length < 1 || disp.length > 40) {
+    return fail(res, 422, 'validation_error', '显示名称 1～40 字')
+  }
+  if (findUserByUsername(name)) {
+    return fail(res, 409, 'username_taken', '该用户名已被注册')
+  }
+
+  const secret = (process.env.ORGANIZER_REGISTER_CODE || '').trim()
+  const wantsOrg =
+    typeof organizer_invite_code === 'string' && organizer_invite_code.trim() === secret && secret.length > 0
+  const role = wantsOrg ? 'organizer' : 'participant'
+
+  const id = randomUUID()
+  const now = new Date().toISOString()
+  insertUser({
+    id,
+    username: name,
+    passwordHash: bcrypt.hashSync(pass, 10),
+    displayName: disp,
+    role,
+    createdAt: now,
+  })
+
+  const user = findUserByUsername(name)
+  const token = signToken(user)
+  ok(res, {
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      display_name: user.display_name,
+      role: user.role,
+    },
+  })
+})
+
+router.post('/login', (req, res) => {
+  const { username, password } = req.body || {}
+  if (!username || !password) {
+    return fail(res, 422, 'validation_error', '请输入用户名和密码')
+  }
+  const user = findUserByUsername(username.trim())
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    return fail(res, 401, 'unauthorized', '用户名或密码错误')
+  }
+  const token = signToken(user)
+  ok(res, {
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      display_name: user.display_name,
+      role: user.role,
+    },
+  })
+})
+
+export default router
