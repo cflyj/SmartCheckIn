@@ -34,13 +34,22 @@ const joinCode = ref('')
 const joinErr = ref('')
 const joinLoading = ref(false)
 const readerId = 'qr-reader-inline'
+const qrFileBridgeId = 'qr-file-bridge'
+const qrFileInputRef = ref(null)
 let html5Qr = null
 let geoWatchId = null
 let geoLocateTimer = null
 let geoCountdownInterval = null
 
-const GEO_LOCATE_DURATION_SEC = 20
-const GEO_LOCATE_MAX_MS = GEO_LOCATE_DURATION_SEC * 1000
+/** 硬性上限：到点必结束，避免无限等 */
+const GEO_LOCATE_HARD_MAX_MS = 45000
+const GEO_LOCATE_HARD_MAX_SEC = Math.ceil(GEO_LOCATE_HARD_MAX_MS / 1000)
+/** 至少等这么久再允许提前结束，减少首点乱跳 */
+const GEO_LOCATE_MIN_BEFORE_EARLY_MS = 1800
+/** 精度优于此值（米）且已过最短时间 → 可提前结束 */
+const GEO_LOCATE_GOOD_ACCURACY_M = 90
+/** 精度不再变好超过此时长 → 认为已稳定，提前采用当前最优 */
+const GEO_LOCATE_STALL_MS = 3200
 
 function clearGeoCountdown() {
   if (geoCountdownInterval != null) {
@@ -63,6 +72,13 @@ const insecureContextHint = computed(() =>
     ? '当前为 HTTP 访问：手机浏览器通常会禁止定位与摄像头。生产环境请使用 HTTPS 域名。'
     : ''
 )
+
+/** 百度等壳浏览器常不开放或限制网页调摄像头（与微信/系统浏览器无关，属内核策略） */
+const limitedQrCameraBrowser = computed(() => {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : ''
+  if (/BaiduBrowser|BIDUBrowser|baidubrowser/i.test(ua)) return 'baidu'
+  return null
+})
 
 function geoMessageFromError(err) {
   if (!err || typeof err.code !== 'number') return null
@@ -168,7 +184,7 @@ const geoFeelFinal = computed(() => {
 
 const countdownBarPct = computed(() => {
   if (!locating.value || locateCountdownSec.value <= 0) return 0
-  return (locateCountdownSec.value / GEO_LOCATE_DURATION_SEC) * 100
+  return (locateCountdownSec.value / GEO_LOCATE_HARD_MAX_SEC) * 100
 })
 
 async function load() {
@@ -256,14 +272,25 @@ function locate() {
   }
 
   locating.value = true
-  locateCountdownSec.value = GEO_LOCATE_DURATION_SEC
-  geoCountdownInterval = window.setInterval(() => {
-    if (locateCountdownSec.value > 0) locateCountdownSec.value -= 1
-  }, 1000)
 
   let best = null
   let finished = false
-  const geoOpts = { enableHighAccuracy: true, maximumAge: 0, timeout: GEO_LOCATE_MAX_MS + 2000 }
+  const locateDeadline = Date.now() + GEO_LOCATE_HARD_MAX_MS
+  const locateStartTs = Date.now()
+  let lastAccuracyImproveAt = locateStartTs
+
+  const tickCountdown = () => {
+    if (finished) return
+    locateCountdownSec.value = Math.max(0, Math.ceil((locateDeadline - Date.now()) / 1000))
+  }
+  tickCountdown()
+  geoCountdownInterval = window.setInterval(tickCountdown, 1000)
+
+  const geoOpts = {
+    enableHighAccuracy: true,
+    maximumAge: 0,
+    timeout: GEO_LOCATE_HARD_MAX_MS + 8000,
+  }
 
   const finish = () => {
     if (finished) return
@@ -284,6 +311,19 @@ function locate() {
       geoMsg.value = ''
     } else {
       geoMsg.value = '无法获取位置，请打开系统定位权限，并尽量到窗边或室外重试。'
+    }
+  }
+
+  const maybeEarlyFinish = () => {
+    if (finished || !best) return
+    const elapsed = Date.now() - locateStartTs
+    if (elapsed < GEO_LOCATE_MIN_BEFORE_EARLY_MS) return
+    if (best.accuracy <= GEO_LOCATE_GOOD_ACCURACY_M) {
+      finish()
+      return
+    }
+    if (Date.now() - lastAccuracyImproveAt >= GEO_LOCATE_STALL_MS) {
+      finish()
     }
   }
 
@@ -310,13 +350,20 @@ function locate() {
   }
 
   const onPosition = (pos) => {
-    best = considerFix(best, pos)
-    if (best) locatingPreviewPos.value = { lat: best.lat, lng: best.lng, accuracy: best.accuracy }
+    const prevAcc = best?.accuracy ?? Infinity
+    const next = considerFix(best, pos)
+    const improved = next && next.accuracy < prevAcc
+    best = next
+    if (best) {
+      if (improved || prevAcc === Infinity) lastAccuracyImproveAt = Date.now()
+      locatingPreviewPos.value = { lat: best.lat, lng: best.lng, accuracy: best.accuracy }
+    }
+    maybeEarlyFinish()
   }
 
   geoWatchId = navigator.geolocation.watchPosition(onPosition, onGeoError, geoOpts)
 
-  geoLocateTimer = window.setTimeout(finish, GEO_LOCATE_MAX_MS)
+  geoLocateTimer = window.setTimeout(finish, GEO_LOCATE_HARD_MAX_MS)
 }
 
 async function submitGeo() {
@@ -349,6 +396,72 @@ async function submitGeo() {
     geoOk.value = false
   } finally {
     geoWorking.value = false
+  }
+}
+
+function isLikelyMobileBrowser() {
+  if (typeof navigator === 'undefined') return false
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+}
+
+function buildQrScanConfig() {
+  const qrbox = (vw, vh) => {
+    const m = Math.min(vw || 300, vh || 300)
+    const s = Math.max(160, Math.min(280, Math.floor(m * 0.72)))
+    return { width: s, height: s }
+  }
+  const cfg = { fps: 10, qrbox }
+  if (isLikelyMobileBrowser()) {
+    cfg.videoConstraints = {
+      facingMode: { ideal: 'environment' },
+      width: { min: 320, ideal: 1280 },
+      height: { min: 240, ideal: 720 },
+    }
+  }
+  return cfg
+}
+
+/** 手机 WebView / Safari 对连续 getUserMedia 限制多；用系统「拍照/选图」在同一次点击里调起相机更稳 */
+function triggerQrFilePick() {
+  if (needsHttpsForSensitiveApis()) {
+    qrMsg.value =
+      '拍照识码需要 HTTPS。请用 https 打开本站；百度等壳浏览器若无法调起相机，请换系统自带浏览器。'
+    return
+  }
+  qrMsg.value = ''
+  qrFileInputRef.value?.click()
+}
+
+async function onQrFileInputChange(ev) {
+  const input = ev.target
+  const file = input?.files?.[0]
+  input.value = ''
+  if (!file || !String(file.type || '').startsWith('image/')) return
+
+  qrWorking.value = true
+  qrMsg.value = ''
+  qrOk.value = false
+  let decoder = null
+  try {
+    decoder = new Html5Qrcode(qrFileBridgeId)
+    const text = await decoder.scanFile(file, false)
+    decoder.clear()
+    decoder = null
+    qrInput.value = extractCheckinTokenFromPayload(text)
+    qrMsg.value = '已识别二维码，请点击下方「确认扫码签到」。'
+  } catch {
+    if (decoder) {
+      try {
+        decoder.clear()
+      } catch {
+        /* ignore */
+      }
+    }
+    qrMsg.value =
+      '未能从照片中识别二维码。请对准大屏、光线充足后重试，或使用「实时取景扫码」/手动输入。'
+    qrOk.value = false
+  } finally {
+    qrWorking.value = false
   }
 }
 
@@ -394,14 +507,7 @@ async function openScanner() {
   // iOS：摄像头须在用户点击后的极短调用链内打开；长 delay / 多余 await 易导致黑屏或无画面
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
 
-  const scanCfg = {
-    fps: 10,
-    qrbox: (vw, vh) => {
-      const m = Math.min(vw || 300, vh || 300)
-      const s = Math.max(160, Math.min(280, Math.floor(m * 0.72)))
-      return { width: s, height: s }
-    },
-  }
+  const scanCfg = buildQrScanConfig()
   const onDecode = (text) => {
     qrInput.value = extractCheckinTokenFromPayload(text)
     closeScanner()
@@ -464,7 +570,7 @@ async function openScanner() {
     showScanner.value = false
     const detail = e && e.message ? String(e.message) : ''
     qrMsg.value =
-      '无法打开摄像头，可改用下方手动输入。请确认已允许摄像头权限，并关闭其它占用相机的应用。' +
+      '无法打开实时取景。可试「拍照识别二维码」、换系统浏览器（勿用微信内置），或手动输入令牌。' +
       (detail && !detail.includes('NO_CAMERA') ? `（${detail}）` : '')
   }
 }
@@ -541,7 +647,7 @@ onUnmounted(() => {
           <p v-if="insecureContextHint" class="banner-error banner--tight u-mb-0">{{ insecureContextHint }}</p>
           <button type="button" class="btn btn-secondary u-mb-3" :disabled="locating" @click="locate">
             <template v-if="!locating">获取 / 刷新定位</template>
-            <template v-else-if="locateCountdownSec > 0">正在定位，剩余 {{ locateCountdownSec }} 秒</template>
+            <template v-else-if="locateCountdownSec > 0">正在定位，最长还可等 {{ locateCountdownSec }} 秒（成功或稳定后会提前结束）</template>
             <template v-else>正在完成定位…</template>
           </button>
           <div v-if="locating" class="geo-locate-wait u-mb-3" role="status" aria-live="polite">
@@ -549,7 +655,9 @@ onUnmounted(() => {
               <div class="geo-countdown-fill" :style="{ width: countdownBarPct + '%' }" />
             </div>
             <p class="geo-countdown-caption muted u-mt-2 u-mb-0">
-              <template v-if="locateCountdownSec > 0">进度条随剩余时间缩短，结束后采用本轮最优定位结果。</template>
+              <template v-if="locateCountdownSec > 0">
+                条为「最长等待」倒计时；精度已足够或约 3 秒无改善时会提前采用当前最优结果。
+              </template>
               <template v-else>正在汇总定位结果，请稍候。</template>
             </p>
             <div v-if="geoFeelPreview" class="geo-feel geo-feel--preview u-mt-3">
@@ -653,7 +761,13 @@ onUnmounted(() => {
 
         <div v-show="tab === 'qr' && hasQr" class="card card-pad stack">
           <p class="form-section-title">二维码签到</p>
-          <p class="muted u-mt-0">扫描组织者大屏上的动态二维码，或请对方朗读令牌后手动输入。</p>
+          <p class="muted u-mt-0">
+            扫描组织者大屏上的动态二维码，或请对方朗读令牌后手动输入。若「实时取景」打不开相机，可试<strong>拍照识别</strong>；部分壳浏览器（如<strong>百度浏览器</strong>）可能不支持网页摄像头，请换<strong>系统自带浏览器</strong>或
+            Chrome / Safari。
+          </p>
+          <p v-if="limitedQrCameraBrowser === 'baidu'" class="banner-error banner--tight u-mb-0">
+            检测到<strong>百度浏览器</strong>：其内置内核通常<strong>不允许网页调用摄像头</strong>，「实时取景扫码」往往会失败，并非本站故障。请<strong>复制本页链接</strong>到系统自带浏览器、Chrome 或 Safari 打开；若 App 有「用其他浏览器打开」也可使用。仍可试「拍照识别」或手动输入令牌。
+          </p>
           <p v-if="insecureContextHint" class="banner-error banner--tight u-mb-0">{{ insecureContextHint }}</p>
           <div class="field">
             <label>令牌</label>
@@ -664,7 +778,23 @@ onUnmounted(() => {
               autocomplete="off"
             />
           </div>
-          <button type="button" class="btn btn-secondary u-mb-3" @click="openScanner">扫描二维码</button>
+          <input
+            ref="qrFileInputRef"
+            type="file"
+            class="sr-only"
+            tabindex="-1"
+            accept="image/*"
+            capture="environment"
+            aria-hidden="true"
+            @change="onQrFileInputChange"
+          />
+          <div :id="qrFileBridgeId" class="qr-file-bridge-host" aria-hidden="true" />
+          <div class="qr-scan-actions stack u-mb-3">
+            <button type="button" class="btn btn-secondary" @click="triggerQrFilePick">
+              拍照识别二维码（手机推荐）
+            </button>
+            <button type="button" class="btn btn-ghost" @click="openScanner">实时取景扫码</button>
+          </div>
           <div v-if="qrMsg" :class="[qrOk ? 'banner-success' : 'banner-error', 'banner--tight']">{{ qrMsg }}</div>
           <button type="button" class="btn btn-primary" :disabled="qrWorking || session.status !== 'active'" @click="submitQr">
             {{ qrWorking ? '提交中…' : '确认扫码签到' }}
@@ -923,5 +1053,33 @@ onUnmounted(() => {
 .geo-feel__meta {
   font-size: 0.8125rem;
   margin: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.qr-file-bridge-host {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 300px;
+  height: 300px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+  overflow: hidden;
+}
+
+.qr-scan-actions .btn {
+  width: 100%;
 }
 </style>

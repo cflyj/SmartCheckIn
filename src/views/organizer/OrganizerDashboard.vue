@@ -4,12 +4,15 @@ import { useRouter } from 'vue-router'
 import { api, ApiError } from '../../api/client.js'
 import AppNavBar from '../../components/AppNavBar.vue'
 import { formatLocal } from '../../utils/date.js'
+import { copyToClipboard } from '../../utils/copyText.js'
 
 const router = useRouter()
 const sessions = ref([])
 const loading = ref(true)
 const error = ref('')
 const copyTip = ref('')
+/** 一键复制失败时展示可长按/全选的链接（百度等浏览器） */
+const copyFallbackUrl = ref('')
 
 function participantJoinUrl(sessionId) {
   const { fullPath } = router.resolve({ name: 'participant-session', params: { id: sessionId } })
@@ -21,13 +24,20 @@ function participantJoinUrl(sessionId) {
 
 async function copyParticipantLink(sessionId) {
   copyTip.value = ''
+  copyFallbackUrl.value = ''
   const url = participantJoinUrl(sessionId)
-  try {
-    await navigator.clipboard.writeText(url)
+  const ok = await copyToClipboard(url)
+  if (ok) {
     copyTip.value = '已复制参与者链接，可发给需要签到的人（对方仍需活动邀请码）。'
-  } catch {
-    copyTip.value = '复制失败，请手动复制：' + url
+    return
   }
+  copyFallbackUrl.value = url
+  copyTip.value =
+    '当前浏览器无法自动复制（如百度浏览器常限制剪贴板）。请长按下方链接全选复制，或换用系统自带浏览器 / Chrome。'
+}
+
+function selectCopyFallback(ev) {
+  ev.target?.select?.()
 }
 
 function pill(s) {
@@ -62,6 +72,17 @@ onMounted(async () => {
         新建活动仅支持「仅指定成员」或「邀请码」，不再提供「任何人可签到」，减轻无关用户列表干扰。「邀请码」类：参与者需在活动页填写<strong>活动编号/链接</strong>与<strong>活动邀请码</strong>；「仅指定成员」需在组织成员中勾选名单。
       </p>
       <p v-if="copyTip" class="muted text-body-xs section-hint u-mt-0">{{ copyTip }}</p>
+      <div v-if="copyFallbackUrl" class="field field--tight u-mt-2">
+        <label class="text-body-xs">参与者链接（可长按全选复制）</label>
+        <input
+          class="input"
+          type="text"
+          readonly
+          :value="copyFallbackUrl"
+          @focus="selectCopyFallback"
+          @click="selectCopyFallback"
+        />
+      </div>
       <div v-if="error" class="banner-error">{{ error }}</div>
       <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
         <span class="loading-spinner" aria-hidden="true" />
