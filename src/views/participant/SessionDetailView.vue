@@ -5,6 +5,7 @@ import { api, ApiError } from '../../api/client.js'
 import AppNavBar from '../../components/AppNavBar.vue'
 import { formatLocal } from '../../utils/date.js'
 import { haversineMeters } from '../../utils/geo.js'
+import { extractCheckinTokenFromPayload } from '../../utils/qrPayload.js'
 import { Html5Qrcode } from 'html5-qrcode'
 
 const route = useRoute()
@@ -218,14 +219,7 @@ async function submitJoin() {
 onMounted(load)
 watch(id, load)
 
-watch(
-  () => [session.value?.id, joinRequired.value],
-  () => {
-    const s = session.value
-    if (s?.id && !joinRequired.value && ['GEO', 'BOTH'].includes(s.checkin_modes)) locate()
-  }
-)
-
+/** 不在进入页面时自动 locate：iOS Safari 等对「非点击触发的定位」会报拒绝或不再弹窗，导致二次进入误显示已拒绝权限。 */
 function considerFix(best, pos) {
   const acc = pos.coords.accuracy
   const cur = {
@@ -322,8 +316,6 @@ function locate() {
 
   geoWatchId = navigator.geolocation.watchPosition(onPosition, onGeoError, geoOpts)
 
-  navigator.geolocation.getCurrentPosition(onPosition, onGeoError, geoOpts)
-
   geoLocateTimer = window.setTimeout(finish, GEO_LOCATE_MAX_MS)
 }
 
@@ -361,7 +353,7 @@ async function submitGeo() {
 }
 
 async function submitQr() {
-  const t = qrInput.value.trim()
+  const t = extractCheckinTokenFromPayload(qrInput.value).trim()
   if (!t) {
     qrMsg.value = '请输入或扫描令牌'
     return
@@ -395,14 +387,23 @@ async function openScanner() {
       '扫码需要摄像头，且必须在安全连接（HTTPS）下使用。用手机通过 http://局域网 IP 打开时浏览器会禁止摄像头。请配置 HTTPS，或暂时用手动输入令牌。'
     return
   }
-  await closeScanner()
+  const hadOpen = !!(html5Qr || showScanner.value)
+  if (hadOpen) await closeScanner()
   showScanner.value = true
   await nextTick()
-  await new Promise((r) => setTimeout(r, 320))
+  // iOS：摄像头须在用户点击后的极短调用链内打开；长 delay / 多余 await 易导致黑屏或无画面
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
 
-  const scanCfg = { fps: 10, qrbox: { width: 250, height: 250 } }
+  const scanCfg = {
+    fps: 10,
+    qrbox: (vw, vh) => {
+      const m = Math.min(vw || 300, vh || 300)
+      const s = Math.max(160, Math.min(280, Math.floor(m * 0.72)))
+      return { width: s, height: s }
+    },
+  }
   const onDecode = (text) => {
-    qrInput.value = text
+    qrInput.value = extractCheckinTokenFromPayload(text)
     closeScanner()
   }
   const onFrameFailure = () => {}
@@ -535,6 +536,7 @@ onUnmounted(() => {
           <p class="form-section-title">地理位置签到</p>
           <p class="muted u-mt-0">
             请在活动现场开启定位。系统<strong>只按距离</strong>判断是否在圈内（不再卡「定位精度」数字，室内更友好）。若仍难成功，请组织者<strong>加大允许半径</strong>或改用二维码签到。
+            <strong>请先点击「获取 / 刷新定位」</strong>以触发授权；部分手机（尤其 Safari）不会在进入页面时自动请求位置，自动请求还可能被误判为「已拒绝」。
           </p>
           <p v-if="insecureContextHint" class="banner-error banner--tight u-mb-0">{{ insecureContextHint }}</p>
           <button type="button" class="btn btn-secondary u-mb-3" :disabled="locating" @click="locate">
@@ -655,7 +657,12 @@ onUnmounted(() => {
           <p v-if="insecureContextHint" class="banner-error banner--tight u-mb-0">{{ insecureContextHint }}</p>
           <div class="field">
             <label>令牌</label>
-            <input v-model="qrInput" class="input" placeholder="粘贴或扫描" autocomplete="off" />
+            <input
+              v-model="qrInput"
+              class="input"
+              placeholder="扫描整段链接或仅粘贴令牌均可"
+              autocomplete="off"
+            />
           </div>
           <button type="button" class="btn btn-secondary u-mb-3" @click="openScanner">扫描二维码</button>
           <div v-if="qrMsg" :class="[qrOk ? 'banner-success' : 'banner-error', 'banner--tight']">{{ qrMsg }}</div>

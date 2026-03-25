@@ -30,6 +30,7 @@ import {
   ensureQrRow,
   getQrState,
 } from '../services/qrToken.js'
+import { extractCheckinTokenFromPayload } from '../utils/qrPayload.js'
 
 const router = Router()
 
@@ -570,8 +571,12 @@ router.post('/:id/checkin/qr', (req, res) => {
     return fail(res, 409, 'mode_not_allowed', '该活动未开启二维码签到')
   }
 
-  const { token } = req.body || {}
-  if (!token || typeof token !== 'string') {
+  const raw = req.body?.token
+  if (!raw || typeof raw !== 'string') {
+    return fail(res, 422, 'validation_error', '请提供签到令牌')
+  }
+  const token = extractCheckinTokenFromPayload(raw).trim()
+  if (!token) {
     return fail(res, 422, 'validation_error', '请提供签到令牌')
   }
 
@@ -585,7 +590,7 @@ router.post('/:id/checkin/qr', (req, res) => {
   if (expired) {
     return fail(res, 422, 'qr_token_expired', '二维码已过期，请刷新后重扫')
   }
-  if (state.token !== token.trim()) {
+  if (state.token !== token) {
     return fail(res, 422, 'qr_token_invalid', '二维码无效或已更新')
   }
 
