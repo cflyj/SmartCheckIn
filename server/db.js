@@ -17,6 +17,8 @@ export function initDb() {
   migrateSessionsRosterOrgs()
   migrateOrganizationsJoinPolicy()
   migrateUserFaceDescriptor()
+  migrateFaceDescriptorAudit()
+  migrateBackfillFaceUpdatedFromDescriptor()
   seedIfEmpty()
 }
 
@@ -25,6 +27,39 @@ function migrateUserFaceDescriptor() {
     db.exec(`ALTER TABLE users ADD COLUMN face_descriptor TEXT`)
   } catch {
     /* 列已存在 */
+  }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN face_updated_at TEXT`)
+  } catch {
+    /* 列已存在 */
+  }
+}
+
+function migrateFaceDescriptorAudit() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS face_descriptor_audit (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('initial','replace')),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_face_audit_user_time ON face_descriptor_audit(user_id, occurred_at)`)
+}
+
+/** 曾有 descriptor 却无 face_updated_at 的行：不写锚点则冷却逻辑被跳过 → 人脸可无限覆盖 */
+function migrateBackfillFaceUpdatedFromDescriptor() {
+  try {
+    db.exec(`
+      UPDATE users
+      SET face_updated_at = datetime('now')
+      WHERE face_descriptor IS NOT NULL
+        AND trim(face_descriptor) != ''
+        AND (face_updated_at IS NULL OR trim(face_updated_at) = '')
+    `)
+  } catch (e) {
+    console.warn('[migrate] backfill face_updated_at skipped:', e?.message || e)
   }
 }
 
@@ -214,9 +249,18 @@ export function getUserFaceDescriptorArr(userId) {
 
 /** @param {number[]} descriptor */
 export function setUserFaceDescriptor(userId, descriptor) {
+  const now = new Date().toISOString()
   getSqlite()
-    .prepare('UPDATE users SET face_descriptor = ? WHERE id = ?')
-    .run(JSON.stringify(descriptor), userId)
+    .prepare(`UPDATE users SET face_descriptor = ?, face_updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(descriptor), now, userId)
+}
+
+export function insertFaceDescriptorAudit(userId, action) {
+  getSqlite()
+    .prepare(
+      `INSERT INTO face_descriptor_audit (id, user_id, occurred_at, action) VALUES (?, ?, ?, ?)`
+    )
+    .run(randomUUID(), userId, new Date().toISOString(), action)
 }
 
 /** 模糊匹配用户名或显示名，供管理员点选添加（避免重名昵称歧义） */

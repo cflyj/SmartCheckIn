@@ -1,17 +1,26 @@
 import { Router } from 'express'
-import { findUserByUsername, getSqlite, setUserFaceDescriptor, getUserFaceDescriptorArr } from '../db.js'
+import { findUserByUsername, getSqlite, setUserFaceDescriptor, getUserFaceDescriptorArr, insertFaceDescriptorAudit } from '../db.js'
 import { ok, fail } from '../utils/response.js'
 import { authRequired } from '../middleware/auth.js'
+import {
+  buildFaceEnrollmentPolicyPayload,
+  getFaceReplacementDenialReason,
+} from '../services/faceEnrollmentPolicy.js'
 
 const router = Router()
 const MAX_RESOLVE = 50
 
 router.get('/me/profile', authRequired, (req, res) => {
   const arr = getUserFaceDescriptorArr(req.user.id)
-  ok(res, { has_face_descriptor: !!arr })
+  ok(res, {
+    has_face_descriptor: !!arr,
+    face_enrollment: buildFaceEnrollmentPolicyPayload(req.user.id),
+  })
 })
 
-/** 录入 / 覆盖人脸样本（仅存 128 维 descriptor JSON，不存储照片） */
+/** 录入 / 覆盖人脸样本（仅存 128 维 descriptor JSON，不存储照片）。
+ * 「替换」受冷却与活动窗口限制 — `docs/FACE_SIGNIN_ANTI_PROXY_PRD.md`
+ */
 router.post('/me/face', authRequired, (req, res) => {
   const d = req.body?.descriptor
   if (!Array.isArray(d) || d.length !== 128) {
@@ -25,13 +34,34 @@ router.post('/me/face', authRequired, (req, res) => {
     }
     nums.push(n)
   }
+
+  const existing = getUserFaceDescriptorArr(req.user.id)
+  if (existing) {
+    const denial = getFaceReplacementDenialReason(req.user.id)
+    if (denial) {
+      if (denial.code === 'face_enrollment_cooldown') {
+        return fail(res, 403, denial.code, denial.message, {
+          next_eligible_at: denial.next_eligible_at,
+        })
+      }
+      return fail(res, 403, denial.code, denial.message, {
+        locked_session: denial.locked_session,
+        locked_until: denial.locked_until_iso,
+      })
+    }
+  }
+
   try {
     setUserFaceDescriptor(req.user.id, nums)
+    insertFaceDescriptorAudit(req.user.id, existing ? 'replace' : 'initial')
   } catch (e) {
     console.error(e)
     return fail(res, 500, 'server_error', '保存失败')
   }
-  ok(res, { ok: true })
+  ok(res, {
+    ok: true,
+    face_enrollment: buildFaceEnrollmentPolicyPayload(req.user.id),
+  })
 })
 
 /** 按登录用户名精确查找一人（用于名单制添加成员，不返回全站用户列表） */

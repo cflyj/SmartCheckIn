@@ -45,7 +45,7 @@
 
 | ID | 需求 | 验收 |
 |----|------|------|
-| P-1 | 提供「人脸样本录入」独立入口；成功后在个人维度可再次覆盖录入。 | `POST /api/users/me/face` 保存 128 维数组；首页/账户区可见入口。 |
+| P-1 | 提供「人脸样本录入」独立入口；首次录入即时生效。**再次覆盖**受服务端「冷却 + 活动前冻结」策略限制（参见 `FACE_SIGNIN_ANTI_PROXY_PRD.md`）。 | `POST /api/users/me/face`；403 返回 `face_enrollment_cooldown` / `face_enrollment_session_lock`。 |
 | P-2 | 活动模式为 `FACE` 时，仅展示人脸签到卡片；未完成录入时阻断并提示去录入。 | 接口返回 `face_not_enrolled`；文案清晰。 |
 | P-3 | 活动模式为 `GEO_FACE` 时，先完成与现网一致的定位流程，再做人脸取样，**一次提交** `POST .../checkin/geo-face`。 | 围栏外或人脸不匹配均失败并记原因；成功仅一条成功记录 `method=geo_face`。 |
 | P-4 | 模型资源从公共 CDN 加载（可配置）；失败时提示网络与 HTTPS。 | 首次打开摄像头前 `loadFaceModels()`。 |
@@ -64,12 +64,13 @@
 | S-1 | 用户表增加 `face_descriptor`（JSON 文本，128 个有限浮点）。 | 迁移幂等。 |
 | S-2 | 欧氏距离阈值默认 **0.55**（与 face-api 常见 FaceMatcher 量级一致，可抽常量）。 | 单元测试或手工对比两条向量。 |
 | S-3 | `POST /checkin/geo` 在 `GEO_FACE` 模式下 **禁止** 单独成功（避免「只签地理」绕过人脸）。 | `mode_not_allowed` 提示使用联合签到。 |
+| S-4 | 「替换人脸样本」受策略引擎约束；写入 `users.face_updated_at`；审计表记录 `initial/replace`。 | 见 `FACE_SIGNIN_ANTI_PROXY_PRD.md` |
 
 ---
 
 ## 6. 交互与文案要点
 
-- 录入页：说明数据仅存数学特征向量，不储存照片原图。
+- 录入页：说明数据仅存数学特征向量，不储存照片原图；替换样本时需配合产品策略文案（冷却与活动前冻结）。
 - 签到页：光线充足、摘掉口罩（若组织者政策允许）、正对摄像头。
 - `GEO_FACE`：按钮文案强调「地理+人脸一次性提交」，避免误以为只点地理即完成。
 
@@ -115,4 +116,11 @@
 
 | 日期 | 版本 | 说明 |
 |------|------|------|
+| 2026-04-29 | 1.1 | P-1/S-4：人脸样本替换冷却、活动前冻结与审计（见 `FACE_SIGNIN_ANTI_PROXY_PRD.md`） |
 | 2026-04-29 | 1.0 | 初版：descriptor 比对 + FACE / GEO_FACE 模式 |
+
+---
+
+## 11. 身份绑定与人脸替换治理（延伸阅读）
+
+本产品**不声称**可防止共谋或照片翻拍等高阶攻击；针对「临场频繁更换向量以代人签到」的常见漏洞，见 **`docs/FACE_SIGNIN_ANTI_PROXY_PRD.md`**（服务端策略、`users.face_updated_at`、`face_descriptor_audit`）。
