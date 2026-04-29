@@ -84,6 +84,18 @@ onUnmounted(() => {
       <section class="home-section" aria-labelledby="home-quick-label">
         <h2 id="home-quick-label" class="home-section__label">快捷入口</h2>
         <div class="grouped-list grouped-list--home">
+          <button
+            v-if="auth.isSuperAdmin"
+            type="button"
+            class="list-cell list-cell--home-tile chevron"
+            @click="router.push({ name: 'admin-console' })"
+          >
+            <span class="home-tile__icon" aria-hidden="true">⚙️</span>
+            <span class="list-cell__stack">
+              <span class="list-cell__title">平台治理</span>
+              <span class="list-cell__meta">组织解散 · 用户封号 · 活动下架 · 审计</span>
+            </span>
+          </button>
           <button type="button" class="list-cell list-cell--home-tile chevron" @click="goOrgs">
             <span class="home-tile__icon home-tile__icon--orgs" aria-hidden="true">🏢</span>
             <span class="list-cell__stack">
@@ -144,36 +156,3 @@ onUnmounted(() => {
     </Teleport>
   </AppPageShell>
 </template>
-
-<style scoped>
-.logout-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 110;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  padding-top: max(var(--space-4), var(--safe-top));
-  padding-bottom: max(var(--space-4), var(--safe-bottom));
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: saturate(180%) blur(12px);
-  -webkit-backdrop-filter: saturate(180%) blur(12px);
-}
-
-.logout-dialog {
-  width: min(100%, 320px);
-  box-shadow: var(--shadow-modal, 0 12px 40px rgba(0, 0, 0, 0.14));
-}
-
-.logout-dialog__actions {
-  display: flex;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
-.logout-dialog__actions .btn {
-  flex: 1;
-  min-height: 44px;
-}
-</style>

@@ -8,6 +8,7 @@ import authRouter from './routes/auth.js'
 import usersRouter from './routes/users.js'
 import orgsRouter from './routes/orgs.js'
 import sessionsRouter from './routes/sessions.js'
+import adminRouter from './routes/admin.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(__dirname, '..')
@@ -31,6 +32,7 @@ app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/orgs', orgsRouter)
 app.use('/api/sessions', sessionsRouter)
+app.use('/api/admin', adminRouter)
 
 if (process.env.NODE_ENV === 'production') {
   const dist = join(__dirname, '../dist')

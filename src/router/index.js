@@ -42,6 +42,12 @@ const routes = [
     meta: { requiresAuth: true, title: '人脸录入' },
   },
   {
+    path: '/admin',
+    name: 'admin-console',
+    component: () => import('../views/admin/AdminConsoleView.vue'),
+    meta: { requiresAuth: true, requiresSuperAdmin: true, title: '平台治理' },
+  },
+  {
     path: '/orgs/join',
     name: 'org-join',
     component: () => import('../views/orgs/OrgJoinView.vue'),
@@ -111,10 +117,19 @@ const router = createRouter({
   },
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.requiresSuperAdmin) {
+    if (!auth.isLoggedIn) {
+      return { name: 'login', query: { redirect: to.fullPath } }
+    }
+    await auth.refreshProfile()
+    if (!auth.user?.is_super_admin) {
+      return { name: 'home' }
+    }
   }
   if (to.meta.guest && auth.isLoggedIn) {
     return { name: 'home' }

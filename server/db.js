@@ -19,6 +19,8 @@ export function initDb() {
   migrateUserFaceDescriptor()
   migrateFaceDescriptorAudit()
   migrateBackfillFaceUpdatedFromDescriptor()
+  migrateUserAccountModeration()
+  migrateAdminAuditLog()
   seedIfEmpty()
 }
 
@@ -93,6 +95,47 @@ function migrateSessionsRosterOrgs() {
   } catch {
     /* 列已存在 */
   }
+}
+
+/** 封号与解封：account_status banned 时禁止登录与 API */
+function migrateUserAccountModeration() {
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN account_status TEXT NOT NULL DEFAULT 'active'`)
+  } catch {
+    /* 列已存在 */
+  }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN banned_at TEXT`)
+  } catch {
+    /* */
+  }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN banned_reason TEXT`)
+  } catch {
+    /* */
+  }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN banned_by TEXT`)
+  } catch {
+    /* */
+  }
+}
+
+function migrateAdminAuditLog() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_audit_log (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      reason TEXT,
+      meta_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (actor_user_id) REFERENCES users(id)
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_log(created_at)`)
 }
 
 export function getSqlite() {
@@ -223,14 +266,34 @@ export function sessionComputedStatus(row) {
 }
 
 export function findUserByUsername(username) {
-  return getSqlite()
-    .prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE')
-    .get(username)
+  return (
+    getSqlite()
+      .prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE')
+      .get(username) || null
+  )
+}
+
+function hydrateUserRow(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    username: row.username,
+    password_hash: row.password_hash,
+    display_name: row.display_name,
+    role: row.role,
+    created_at: row.created_at,
+    account_status: row.account_status || 'active',
+    banned_at: row.banned_at || null,
+    banned_reason: row.banned_reason || null,
+    banned_by: row.banned_by || null,
+    face_descriptor: row.face_descriptor,
+    face_updated_at: row.face_updated_at,
+  }
 }
 
 export function findUserById(id) {
-  const u = getSqlite().prepare('SELECT id, username, display_name, role, created_at FROM users WHERE id = ?').get(id)
-  return u || null
+  const row = getSqlite().prepare(`SELECT * FROM users WHERE id = ?`).get(id)
+  return hydrateUserRow(row)
 }
 
 /** @returns {number[] | null} */
@@ -291,8 +354,8 @@ export function countUsers() {
 export function insertUser({ id, username, passwordHash, displayName, role, createdAt }) {
   getSqlite()
     .prepare(
-      `INSERT INTO users (id, username, password_hash, display_name, role, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO users (id, username, password_hash, display_name, role, created_at, account_status)
+       VALUES (?, ?, ?, ?, ?, ?, 'active')`
     )
     .run(id, username, passwordHash, displayName, role, createdAt)
 }
@@ -455,6 +518,184 @@ export function deleteOrganizationById(orgId) {
   getSqlite().prepare('DELETE FROM organization_join_requests WHERE org_id = ?').run(orgId)
   getSqlite().prepare('DELETE FROM organization_members WHERE org_id = ?').run(orgId)
   getSqlite().prepare('DELETE FROM organizations WHERE id = ?').run(orgId)
+}
+
+/** 从所有活动的 roster_org_ids 中移除给定组织（解散组织前应调用一次） */
+export function stripOrgFromAllSessionRosters(orgId) {
+  const oid = String(orgId)
+  const rows = getSqlite().prepare(`SELECT id, roster_org_ids FROM sessions`).all()
+  const upd = getSqlite().prepare(`UPDATE sessions SET roster_org_ids = ? WHERE id = ?`)
+  for (const r of rows) {
+    const ids = parseJsonField(r.roster_org_ids, [])
+    if (!Array.isArray(ids)) continue
+    const next = ids.filter((x) => String(x) !== oid)
+    if (next.length === ids.length) continue
+    upd.run(JSON.stringify(next), r.id)
+  }
+}
+
+export function banUser(targetId, { bannedBy, reason }) {
+  const now = new Date().toISOString()
+  getSqlite()
+    .prepare(
+      `UPDATE users SET account_status = 'banned', banned_at = ?, banned_reason = ?, banned_by = ? WHERE id = ?`
+    )
+    .run(now, reason ?? null, bannedBy, targetId)
+}
+
+export function unbanUser(targetId) {
+  getSqlite()
+    .prepare(
+      `UPDATE users SET account_status = 'active', banned_at = NULL, banned_reason = NULL, banned_by = NULL WHERE id = ?`
+    )
+    .run(targetId)
+}
+
+export function insertAdminAuditLog(entry) {
+  const metaStr =
+    entry.meta_json == null
+      ? null
+      : typeof entry.meta_json === 'string'
+        ? entry.meta_json
+        : JSON.stringify(entry.meta_json)
+  getSqlite()
+    .prepare(
+      `INSERT INTO admin_audit_log (id, actor_user_id, action, target_type, target_id, reason, meta_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      entry.id,
+      entry.actor_user_id,
+      entry.action,
+      entry.target_type,
+      entry.target_id,
+      entry.reason ?? null,
+      metaStr,
+      entry.created_at
+    )
+}
+
+export function listAdminAuditLogs(limit = 50, actionFilter = '') {
+  const lim = Math.min(200, Math.max(1, limit))
+  const valid =
+    actionFilter && ['delete_org', 'ban_user', 'unban_user', 'cancel_session'].includes(actionFilter)
+      ? actionFilter
+      : ''
+  const sql = valid
+    ? `SELECT a.id, a.actor_user_id, a.action, a.target_type, a.target_id, a.reason, a.meta_json, a.created_at,
+        act.username AS actor_username
+       FROM admin_audit_log a
+       LEFT JOIN users act ON act.id = a.actor_user_id
+       WHERE a.action = ?
+       ORDER BY datetime(a.created_at) DESC LIMIT ?`
+    : `SELECT a.id, a.actor_user_id, a.action, a.target_type, a.target_id, a.reason, a.meta_json, a.created_at,
+        act.username AS actor_username
+       FROM admin_audit_log a
+       LEFT JOIN users act ON act.id = a.actor_user_id
+       ORDER BY datetime(a.created_at) DESC LIMIT ?`
+  const rows = valid ? getSqlite().prepare(sql).all(valid, lim) : getSqlite().prepare(sql).all(lim)
+  return rows.map((r) => ({
+    id: r.id,
+    actor_user_id: r.actor_user_id,
+    actor_username: r.actor_username ?? null,
+    action: r.action,
+    target_type: r.target_type,
+    target_id: r.target_id,
+    reason: r.reason,
+    created_at: r.created_at,
+    meta: parseJsonField(r.meta_json, null),
+  }))
+}
+
+/** 组织列表（可选按名称 / id 关键字过滤） */
+export function listOrganizationsGlobal(searchQuery) {
+  const raw = typeof searchQuery === 'string' ? searchQuery.trim() : ''
+  const baseSql = `SELECT o.id, o.name, o.created_by, o.created_at, u.username AS creator_username
+    FROM organizations o
+    LEFT JOIN users u ON u.id = o.created_by`
+  if (!raw) {
+    return getSqlite().prepare(`${baseSql} ORDER BY datetime(o.created_at) DESC`).all()
+  }
+  if (/^[0-9a-f-]{36}$/i.test(raw)) {
+    return getSqlite()
+      .prepare(`${baseSql} WHERE o.id = ? ORDER BY datetime(o.created_at) DESC`)
+      .all(raw.toLowerCase())
+  }
+  const esc = raw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+  const like = `%${esc}%`
+  return getSqlite()
+    .prepare(
+      `${baseSql} WHERE o.name LIKE ? ESCAPE '\\' OR o.id LIKE ? ESCAPE '\\' ORDER BY datetime(o.created_at) DESC`
+    )
+    .all(like, like)
+}
+
+/**
+ * @param {string} query
+ * @param {number} limit
+ * @param {'all'|'active'|'banned'} [accountFilter]
+ */
+export function listUsersForAdminSearch(query, limit = 40, accountFilter = 'all') {
+  const lim = Math.min(80, Math.max(1, limit))
+  const raw = typeof query === 'string' ? query.trim() : ''
+  const filter = accountFilter === 'banned' || accountFilter === 'active' ? accountFilter : 'all'
+
+  let statusClause = ''
+  if (filter === 'banned') statusClause = ` AND COALESCE(account_status, 'active') = 'banned' `
+  else if (filter === 'active') statusClause = ` AND COALESCE(account_status, 'active') != 'banned' `
+
+  if (raw.length >= 2) {
+    const esc = raw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+    const like = `%${esc}%`
+    return getSqlite()
+      .prepare(
+        `SELECT id, username, display_name, role, account_status, banned_at, created_at FROM users
+         WHERE (username LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\') ${statusClause}
+         ORDER BY username COLLATE NOCASE LIMIT ?`
+      )
+      .all(like, like, lim)
+  }
+  return getSqlite()
+    .prepare(
+      `SELECT id, username, display_name, role, account_status, banned_at, created_at FROM users
+       WHERE 1=1 ${statusClause}
+       ORDER BY datetime(created_at) DESC LIMIT ?`
+    )
+    .all(lim)
+}
+
+/** @param {'all'|'active'|'cancelled'} [sessionStatus] */
+export function listSessionsForAdminRecent(limit = 40, sessionStatus = 'all') {
+  const lim = Math.min(200, Math.max(1, limit))
+  let cancelledClause = ''
+  if (sessionStatus === 'active') cancelledClause = ' AND s.cancelled = 0 '
+  else if (sessionStatus === 'cancelled') cancelledClause = ' AND s.cancelled = 1 '
+  return getSqlite()
+    .prepare(
+      `SELECT s.id, s.title, s.organizer_id, s.starts_at, s.ends_at, s.cancelled, s.checkin_modes, s.created_at,
+        ou.username AS organizer_username, ou.display_name AS organizer_display_name
+       FROM sessions s
+       LEFT JOIN users ou ON ou.id = s.organizer_id
+       WHERE 1=1 ${cancelledClause}
+       ORDER BY datetime(s.created_at) DESC LIMIT ?`
+    )
+    .all(lim)
+}
+
+export function adminCancelSession(sessionId, cancel = true) {
+  getSqlite().prepare(`UPDATE sessions SET cancelled = ? WHERE id = ?`).run(cancel ? 1 : 0, sessionId)
+}
+
+export function countUsersTotal() {
+  return getSqlite().prepare(`SELECT COUNT(*) AS c FROM users`).get().c
+}
+
+export function countOrganizationsTotal() {
+  return getSqlite().prepare(`SELECT COUNT(*) AS c FROM organizations`).get().c
+}
+
+export function countSessionsTotal() {
+  return getSqlite().prepare(`SELECT COUNT(*) AS c FROM sessions`).get().c
 }
 
 export function addOrganizationMember(orgId, userId, role, joinedAt) {

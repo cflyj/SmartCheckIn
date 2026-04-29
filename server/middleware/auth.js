@@ -25,6 +25,9 @@ export function authRequired(req, res, next) {
     const payload = jwt.verify(h.slice(7), JWT_SECRET)
     const user = findUserById(payload.sub)
     if (!user) return fail(res, 401, 'unauthorized', '用户不存在')
+    if ((user.account_status || 'active') === 'banned') {
+      return fail(res, 403, 'account_banned', '账号已被停用')
+    }
     req.user = user
     next()
   } catch {

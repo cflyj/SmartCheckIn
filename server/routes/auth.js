@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { findUserByUsername, insertUser } from '../db.js'
 import { ok, fail } from '../utils/response.js'
 import { signToken } from '../middleware/auth.js'
+import { sessionUserPayload } from '../utils/sessionUserPayload.js'
 
 const router = Router()
 
@@ -66,15 +67,13 @@ router.post('/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return fail(res, 401, 'unauthorized', '用户名或密码错误')
   }
+  if ((user.account_status || 'active') === 'banned') {
+    return fail(res, 403, 'account_banned', '账号已被停用。如有异议请联系平台管理员')
+  }
   const token = signToken(user)
   ok(res, {
     token,
-    user: {
-      id: user.id,
-      username: user.username,
-      display_name: user.display_name,
-      role: user.role,
-    },
+    user: sessionUserPayload(user),
   })
 })
 

@@ -7,9 +7,15 @@ import {
   getFaceReplacementDenialReason,
 } from '../services/faceEnrollmentPolicy.js'
 import { assertProbeDetectionAcceptable } from '../services/faceVerify.js'
+import { sessionUserPayload } from '../utils/sessionUserPayload.js'
 
 const router = Router()
 const MAX_RESOLVE = 50
+
+/** 当前会话用户（前端用于刷新权限与 is_super_admin） */
+router.get('/me', authRequired, (req, res) => {
+  ok(res, sessionUserPayload(req.user))
+})
 
 router.get('/me/profile', authRequired, (req, res) => {
   const arr = getUserFaceDescriptorArr(req.user.id)

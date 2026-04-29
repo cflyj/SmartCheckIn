@@ -39,5 +39,30 @@ export const useAuthStore = defineStore('auth', () => {
     setSession('', null)
   }
 
-  return { token, user, isLoggedIn, login, register, logout, setSession }
+  /** 从服务端同步用户（含 is_super_admin、account_status） */
+  async function refreshProfile() {
+    if (!token.value) return null
+    try {
+      const me = await api('/users/me')
+      user.value = me
+      localStorage.setItem('user', JSON.stringify(me))
+      return me
+    } catch {
+      return null
+    }
+  }
+
+  const isSuperAdmin = computed(() => !!user.value?.is_super_admin)
+
+  return {
+    token,
+    user,
+    isLoggedIn,
+    isSuperAdmin,
+    login,
+    register,
+    logout,
+    setSession,
+    refreshProfile,
+  }
 })
