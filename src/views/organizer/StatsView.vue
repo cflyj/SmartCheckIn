@@ -57,9 +57,17 @@ watch(id, load)
             <span class="list-cell__title">地理位置</span>
             <span class="list-cell__meta">{{ stats.by_method?.geo ?? 0 }}</span>
           </div>
-          <div class="list-cell list-cell--static list-cell--borderless">
+          <div class="list-cell list-cell--static">
             <span class="list-cell__title">二维码</span>
             <span class="list-cell__meta">{{ stats.by_method?.qr ?? 0 }}</span>
+          </div>
+          <div class="list-cell list-cell--static">
+            <span class="list-cell__title">仅人脸</span>
+            <span class="list-cell__meta">{{ stats.by_method?.face ?? 0 }}</span>
+          </div>
+          <div class="list-cell list-cell--static list-cell--borderless">
+            <span class="list-cell__title">地理 + 人脸</span>
+            <span class="list-cell__meta">{{ stats.by_method?.geo_face ?? 0 }}</span>
           </div>
         </div>
 

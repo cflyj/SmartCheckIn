@@ -7,6 +7,7 @@ import { formatLocal } from '../../utils/date.js'
 import { haversineMeters } from '../../utils/geo.js'
 import { extractCheckinTokenFromPayload } from '../../utils/qrPayload.js'
 import { Html5Qrcode } from 'html5-qrcode'
+import { captureFaceDescriptor, loadFaceModels } from '../../utils/faceClient.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +24,22 @@ const qrOk = ref(false)
 const qrInput = ref('')
 const geoWorking = ref(false)
 const qrWorking = ref(false)
+const checkinMode = computed(() => session.value?.checkin_modes || '')
+const hasFaceProfile = ref(false)
+
+/** 仅人脸识别 */
+const faceOnlyVideoRef = ref(null)
+let faceOnlyMediaStream = null
+const faceOnlyDescriptor = ref(null)
+const faceOnlyBusy = ref(false)
+
+/** 地理 + 人脸联合 */
+const geoFaceVideoRef = ref(null)
+let geoFaceMediaStream = null
+const geoFaceDescriptor = ref(null)
+const geoFaceSnapBusy = ref(false)
+const geoFaceSubmitBusy = ref(false)
+
 const showScanner = ref(false)
 const locating = ref(false)
 /** 定位等待倒计时（秒），0 表示未在倒计时 */
@@ -88,8 +105,42 @@ function geoMessageFromError(err) {
   return null
 }
 
-const hasGeo = computed(() => session.value && ['GEO', 'BOTH'].includes(session.value.checkin_modes))
-const hasQr = computed(() => session.value && ['QR', 'BOTH'].includes(session.value.checkin_modes))
+const hasGeo = computed(() =>
+  session.value ? ['GEO', 'BOTH', 'GEO_FACE'].includes(session.value.checkin_modes) : false
+)
+const hasQr = computed(() =>
+  session.value ? ['QR', 'BOTH'].includes(session.value.checkin_modes) : false
+)
+
+const geoCardVisible = computed(() => {
+  if (!session.value || !hasGeo.value) return false
+  if (session.value.checkin_modes === 'BOTH') return tab.value === 'geo'
+  return session.value.checkin_modes === 'GEO' || session.value.checkin_modes === 'GEO_FACE'
+})
+
+const qrCardVisible = computed(() => {
+  if (!session.value || !hasQr.value) return false
+  if (session.value.checkin_modes === 'BOTH') return tab.value === 'qr'
+  return session.value.checkin_modes === 'QR'
+})
+
+const showFaceOnlyPanel = computed(() => checkinMode.value === 'FACE')
+const showGeoFaceExtras = computed(() => checkinMode.value === 'GEO_FACE')
+
+const useStandaloneGeoSubmit = computed(() => {
+  const m = checkinMode.value
+  if (m === 'GEO') return true
+  if (m === 'BOTH' && tab.value === 'geo') return true
+  return false
+})
+
+const requiresFaceEnrollmentHint = computed(
+  () =>
+    !!session.value &&
+    session.value.status === 'active' &&
+    (showFaceOnlyPanel.value || showGeoFaceExtras.value) &&
+    !hasFaceProfile.value
+)
 
 const clientPos = ref(null)
 const distM = computed(() => {
@@ -199,8 +250,7 @@ async function load() {
       loading.value = false
       return
     }
-    if (hasGeo.value && hasQr.value) tab.value = 'geo'
-    else if (hasQr.value) tab.value = 'qr'
+    if (session.value.checkin_modes === 'BOTH') tab.value = 'geo'
     else tab.value = 'geo'
 
     const pre = route.query.token
@@ -208,6 +258,11 @@ async function load() {
       qrInput.value = pre
       tab.value = 'qr'
     }
+    geoFaceDescriptor.value = null
+    faceOnlyDescriptor.value = null
+    stopGeoFaceCam()
+    stopFaceOnlyCam()
+    await refreshFaceProfile()
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '加载失败'
   } finally {
@@ -234,6 +289,35 @@ async function submitJoin() {
 
 onMounted(load)
 watch(id, load)
+
+async function refreshFaceProfile() {
+  try {
+    const d = await api('/users/me/profile')
+    hasFaceProfile.value = !!d.has_face_descriptor
+  } catch {
+    hasFaceProfile.value = false
+  }
+}
+
+function stopGeoFaceCam() {
+  try {
+    geoFaceMediaStream?.getTracks().forEach((t) => t.stop())
+  } catch {
+    /* ignore */
+  }
+  geoFaceMediaStream = null
+  if (geoFaceVideoRef.value) geoFaceVideoRef.value.srcObject = null
+}
+
+function stopFaceOnlyCam() {
+  try {
+    faceOnlyMediaStream?.getTracks().forEach((t) => t.stop())
+  } catch {
+    /* ignore */
+  }
+  faceOnlyMediaStream = null
+  if (faceOnlyVideoRef.value) faceOnlyVideoRef.value.srcObject = null
+}
 
 /** 不在进入页面时自动 locate：iOS Safari 等对「非点击触发的定位」会报拒绝或不再弹窗，导致二次进入误显示已拒绝权限。 */
 function considerFix(best, pos) {
@@ -396,6 +480,164 @@ async function submitGeo() {
     geoOk.value = false
   } finally {
     geoWorking.value = false
+  }
+}
+
+async function openGeoFaceCamera() {
+  geoMsg.value = ''
+  if (needsHttpsForSensitiveApis()) {
+    geoMsg.value =
+      '摄像头与模型下载需要 HTTPS。用手机通过 http://局域网 IP 访问时会被禁用，请改 https 或使用 localhost。'
+    return
+  }
+  try {
+    await loadFaceModels()
+    stopGeoFaceCam()
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false,
+    })
+    geoFaceMediaStream = stream
+    await nextTick()
+    if (geoFaceVideoRef.value) {
+      geoFaceVideoRef.value.srcObject = stream
+      await geoFaceVideoRef.value.play()
+    }
+  } catch {
+    geoMsg.value = '无法打开摄像头，请在权限设置中允许后重试'
+  }
+}
+
+async function snapGeoFaceProbe() {
+  geoMsg.value = ''
+  geoFaceSnapBusy.value = true
+  try {
+    if (!geoFaceVideoRef.value?.srcObject) {
+      geoMsg.value = '请先点击「打开人脸取景」'
+      return
+    }
+    const shot = await captureFaceDescriptor(geoFaceVideoRef.value)
+    if (shot.error) {
+      geoFaceDescriptor.value = null
+      geoMsg.value = shot.error === 'no_face' ? '未检测到正脸，请正对镜头并保持光线充足' : '采样失败'
+      geoOk.value = false
+      return
+    }
+    geoFaceDescriptor.value = shot.descriptor
+    geoOk.value = false
+    geoMsg.value = '已将当前画面采样为人脸特征，可与定位一起提交。也可重新采样替换。'
+  } finally {
+    geoFaceSnapBusy.value = false
+  }
+}
+
+async function submitGeoFaceCombined() {
+  geoMsg.value = ''
+  geoOk.value = false
+  if (!clientPos.value) {
+    geoMsg.value = '请先完成「获取 / 刷新定位」'
+    return
+  }
+  if (!geoFaceDescriptor.value) {
+    geoMsg.value = '请先打开取景并采样人脸'
+    return
+  }
+  geoFaceSubmitBusy.value = true
+  try {
+    const data = await api(`/sessions/${id.value}/checkin/geo-face`, {
+      method: 'POST',
+      body: {
+        lat: clientPos.value.lat,
+        lng: clientPos.value.lng,
+        accuracy_m: clientPos.value.accuracy,
+        client_time: new Date().toISOString(),
+        descriptor: geoFaceDescriptor.value,
+      },
+    })
+    geoOk.value = true
+    geoMsg.value = data.already_checked_in ? '你已签到成功' : '地理 + 人脸联合签到成功'
+    stopGeoFaceCam()
+    geoFaceDescriptor.value = null
+  } catch (e) {
+    geoMsg.value = e instanceof ApiError ? e.message : '签到失败'
+    geoOk.value = false
+  } finally {
+    geoFaceSubmitBusy.value = false
+  }
+}
+
+const faceOnlyMsg = ref('')
+const faceOnlyOk = ref(false)
+const faceOnlySnapBusy = ref(false)
+
+async function openFaceOnlyCamera() {
+  faceOnlyMsg.value = ''
+  faceOnlyOk.value = false
+  if (needsHttpsForSensitiveApis()) {
+    faceOnlyMsg.value = '人脸识别需要 HTTPS 或 localhost 环境访问本站'
+    return
+  }
+  try {
+    await loadFaceModels()
+    stopFaceOnlyCam()
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false,
+    })
+    faceOnlyMediaStream = stream
+    await nextTick()
+    if (faceOnlyVideoRef.value) {
+      faceOnlyVideoRef.value.srcObject = stream
+      await faceOnlyVideoRef.value.play()
+    }
+  } catch {
+    faceOnlyMsg.value = '无法打开摄像头'
+  }
+}
+
+async function snapFaceOnlyProbe() {
+  faceOnlySnapBusy.value = true
+  faceOnlyMsg.value = ''
+  faceOnlyOk.value = false
+  try {
+    if (!faceOnlyVideoRef.value?.srcObject) {
+      faceOnlyMsg.value = '请先打开摄像头预览'
+      return
+    }
+    const shot = await captureFaceDescriptor(faceOnlyVideoRef.value)
+    if (shot.error) {
+      faceOnlyDescriptor.value = null
+      faceOnlyMsg.value = shot.error === 'no_face' ? '未检测到正脸，请正对镜头并保持光线充足' : '采样失败'
+      return
+    }
+    faceOnlyDescriptor.value = shot.descriptor
+    faceOnlyMsg.value = '已采样，可点击下方确认人脸识别签到'
+  } finally {
+    faceOnlySnapBusy.value = false
+  }
+}
+
+async function submitFaceOnly() {
+  faceOnlyMsg.value = ''
+  faceOnlyOk.value = false
+  if (!faceOnlyDescriptor.value) {
+    faceOnlyMsg.value = '请先采样人脸'
+    return
+  }
+  faceOnlyBusy.value = true
+  try {
+    const data = await api(`/sessions/${id.value}/checkin/face`, {
+      method: 'POST',
+      body: { descriptor: faceOnlyDescriptor.value },
+    })
+    faceOnlyOk.value = true
+    faceOnlyMsg.value = data.already_checked_in ? '你已签到成功' : '人脸识别签到成功'
+    stopFaceOnlyCam()
+    faceOnlyDescriptor.value = null
+  } catch (e) {
+    faceOnlyMsg.value = e instanceof ApiError ? e.message : '签到失败'
+  } finally {
+    faceOnlyBusy.value = false
   }
 }
 
@@ -589,6 +831,8 @@ async function closeScanner() {
 }
 
 onUnmounted(() => {
+  stopGeoFaceCam()
+  stopFaceOnlyCam()
   if (geoLocateTimer != null) {
     clearTimeout(geoLocateTimer)
     geoLocateTimer = null
@@ -633,12 +877,20 @@ onUnmounted(() => {
           <p v-else-if="session.status === 'ended'" class="muted u-mt-3 u-mb-0">活动已结束。</p>
         </div>
 
-        <div v-if="hasGeo && hasQr" class="tabs">
+        <div v-if="requiresFaceEnrollmentHint" class="inset-callout">
+          <p class="u-mb-0">
+            你尚未录入人脸样本。请先到
+            <router-link :to="{ name: 'participant-face-enroll' }">人脸样本录入</router-link>
+            页面保存特征，再回到本页完成签到。
+          </p>
+        </div>
+
+        <div v-if="session.checkin_modes === 'BOTH'" class="tabs">
           <button type="button" :class="['tab', tab === 'geo' && 'tab--active']" @click="tab = 'geo'">地理位置</button>
           <button type="button" :class="['tab', tab === 'qr' && 'tab--active']" @click="tab = 'qr'">二维码</button>
         </div>
 
-        <div v-show="tab === 'geo' && hasGeo" class="card card-pad stack">
+        <div v-show="geoCardVisible" class="card card-pad stack">
           <p class="form-section-title">地理位置签到</p>
           <p class="muted u-mt-0">
             请在活动现场开启定位。系统<strong>只按距离</strong>判断是否在圈内（不再卡「定位精度」数字，室内更友好）。若仍难成功，请组织者<strong>加大允许半径</strong>或改用二维码签到。
@@ -754,12 +1006,55 @@ onUnmounted(() => {
             <template v-if="distM != null"> · 距签到点约 {{ distM }} 米</template>
           </div>
           <div v-if="geoMsg" :class="[geoOk ? 'banner-success' : 'banner-error', 'banner--tight']">{{ geoMsg }}</div>
-          <button type="button" class="btn btn-primary" :disabled="geoWorking || session.status !== 'active'" @click="submitGeo">
+          <button
+            v-if="useStandaloneGeoSubmit"
+            type="button"
+            class="btn btn-primary"
+            :disabled="geoWorking || session.status !== 'active'"
+            @click="submitGeo"
+          >
             {{ geoWorking ? '提交中…' : '确认地理签到' }}
           </button>
+
+          <template v-if="showGeoFaceExtras">
+            <p class="form-section-title field--top-sep u-mb-2">第二步 · 人脸识别</p>
+            <p class="muted text-body-sm u-mt-0 u-mb-3">
+              与本页定位<strong>一并提交一次</strong>，系统同时校验围栏与是否与已录入人脸匹配。取景请光线充足并正对前置摄像头。
+            </p>
+            <div class="face-inline-video u-mb-3">
+              <video
+                ref="geoFaceVideoRef"
+                class="face-inline-video__el"
+                playsinline
+                muted
+                aria-label="人脸取景"
+              />
+            </div>
+            <div class="flex-row-wrap u-mb-3">
+              <button type="button" class="btn btn-secondary btn--inline" @click="openGeoFaceCamera">
+                打开人脸取景
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn--inline"
+                :disabled="geoFaceSnapBusy || session.status !== 'active'"
+                @click="snapGeoFaceProbe"
+              >
+                {{ geoFaceSnapBusy ? '处理中…' : '采样当前画面' }}
+              </button>
+            </div>
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="geoFaceSubmitBusy || session.status !== 'active'"
+              @click="submitGeoFaceCombined"
+            >
+              {{ geoFaceSubmitBusy ? '提交中…' : '提交地理 + 人脸联合签到' }}
+            </button>
+          </template>
         </div>
 
-        <div v-show="tab === 'qr' && hasQr" class="card card-pad stack">
+        <div v-show="qrCardVisible" class="card card-pad stack">
           <p class="form-section-title">二维码签到</p>
           <p class="muted u-mt-0">
             扫描组织者大屏上的动态二维码，或请对方朗读令牌后手动输入。若「实时取景」打不开相机，可试<strong>拍照识别</strong>；部分壳浏览器（如<strong>百度浏览器</strong>）可能不支持网页摄像头，请换<strong>系统自带浏览器</strong>或
@@ -801,7 +1096,53 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <div v-if="!hasGeo && !hasQr" class="banner-error">该活动未开放签到方式。</div>
+        <div v-show="showFaceOnlyPanel" class="card card-pad stack">
+          <p class="form-section-title">人脸识别签到</p>
+          <p class="muted u-mt-0">
+            本活动仅用人脸核验。系统将你所见画面提取为向量，并与账号预先录入的特征比对<strong>（不储存照片）</strong>。
+          </p>
+          <p v-if="insecureContextHint" class="banner-error banner--tight u-mb-0">{{ insecureContextHint }}</p>
+          <div class="face-inline-video u-mb-3">
+            <video
+              ref="faceOnlyVideoRef"
+              class="face-inline-video__el"
+              playsinline
+              muted
+              aria-label="人像取景"
+            />
+          </div>
+          <div class="flex-row-wrap u-mb-3">
+            <button type="button" class="btn btn-secondary btn--inline" @click="openFaceOnlyCamera">
+              打开摄像头
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary btn--inline"
+              :disabled="faceOnlySnapBusy || session.status !== 'active'"
+              @click="snapFaceOnlyProbe"
+            >
+              {{ faceOnlySnapBusy ? '处理…' : '采样当前画面' }}
+            </button>
+          </div>
+          <div v-if="faceOnlyMsg" :class="[faceOnlyOk ? 'banner-success' : 'banner-error', 'banner--tight']">
+            {{ faceOnlyMsg }}
+          </div>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="faceOnlyBusy || session.status !== 'active'"
+            @click="submitFaceOnly"
+          >
+            {{ faceOnlyBusy ? '提交中…' : '确认人脸识别签到' }}
+          </button>
+        </div>
+
+        <div
+          v-if="!geoCardVisible && !qrCardVisible && !showFaceOnlyPanel"
+          class="banner-error"
+        >
+          该活动未开放可用的签到方式。
+        </div>
         </template>
       </template>
     </div>
@@ -1053,6 +1394,19 @@ onUnmounted(() => {
 .geo-feel__meta {
   font-size: 0.8125rem;
   margin: 0;
+}
+
+.face-inline-video {
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
+  background: #000;
+}
+
+.face-inline-video__el {
+  display: block;
+  width: 100%;
+  max-height: min(52vh, 360px);
+  object-fit: cover;
 }
 
 .sr-only {

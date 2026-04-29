@@ -16,7 +16,16 @@ export function initDb() {
   createTables()
   migrateSessionsRosterOrgs()
   migrateOrganizationsJoinPolicy()
+  migrateUserFaceDescriptor()
   seedIfEmpty()
+}
+
+function migrateUserFaceDescriptor() {
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN face_descriptor TEXT`)
+  } catch {
+    /* 列已存在 */
+  }
 }
 
 function migrateOrganizationsJoinPolicy() {
@@ -187,6 +196,27 @@ export function findUserByUsername(username) {
 export function findUserById(id) {
   const u = getSqlite().prepare('SELECT id, username, display_name, role, created_at FROM users WHERE id = ?').get(id)
   return u || null
+}
+
+/** @returns {number[] | null} */
+export function getUserFaceDescriptorArr(userId) {
+  const row = getSqlite().prepare('SELECT face_descriptor FROM users WHERE id = ?').get(userId)
+  const arr = parseJsonField(row?.face_descriptor, null)
+  if (!Array.isArray(arr) || arr.length !== 128) return null
+  const out = []
+  for (let i = 0; i < arr.length; i++) {
+    const n = Number(arr[i])
+    if (!Number.isFinite(n)) return null
+    out.push(n)
+  }
+  return out
+}
+
+/** @param {number[]} descriptor */
+export function setUserFaceDescriptor(userId, descriptor) {
+  getSqlite()
+    .prepare('UPDATE users SET face_descriptor = ? WHERE id = ?')
+    .run(JSON.stringify(descriptor), userId)
 }
 
 /** 模糊匹配用户名或显示名，供管理员点选添加（避免重名昵称歧义） */

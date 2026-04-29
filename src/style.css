@@ -655,6 +655,19 @@ button.list-cell--home-tile:active {
   background: rgba(0, 0, 0, 0.035);
 }
 
+a.list-cell.home-tile-router.list-cell {
+  width: 100%;
+  margin: 0;
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+  color: inherit;
+}
+
+a.home-tile-router.list-cell:active {
+  background: rgba(0, 0, 0, 0.035);
+}
+
 /* Buttons */
 .btn {
   display: flex;
@@ -1536,6 +1549,50 @@ button.list-cell--home-tile:active {
 .banner-error--on-dark::before {
   background: rgba(255, 255, 255, 0.15);
   color: #fff;
+}
+
+/* 活动表单：围栏中心来源反馈 */
+.geo-fence-feedback {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+}
+
+.geo-fence-feedback--accent {
+  background: rgba(52, 199, 89, 0.1);
+  border: 1px solid rgba(52, 199, 89, 0.28);
+}
+
+.geo-fence-feedback--neutral {
+  background: rgba(0, 122, 255, 0.06);
+  border: 1px solid rgba(0, 122, 255, 0.2);
+}
+
+.geo-fence-feedback__badge {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ios-green);
+}
+
+.geo-fence-feedback--neutral .geo-fence-feedback__badge {
+  color: var(--ios-blue);
+}
+
+.geo-fence-feedback__main {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: var(--line-body);
+  color: var(--ios-label);
+}
+
+.geo-fence-feedback__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--line-body);
+  color: var(--ios-secondary);
 }
 
 /* QR box */

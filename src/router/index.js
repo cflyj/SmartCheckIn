@@ -34,6 +34,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/participant/face-enroll',
+    name: 'participant-face-enroll',
+    component: () => import('../views/participant/FaceEnrollmentView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/orgs/join',
     name: 'org-join',
     component: () => import('../views/orgs/OrgJoinView.vue'),

@@ -103,6 +103,16 @@ onUnmounted(() => {
               <span class="list-cell__meta">可签到的活动 · 邀请码加入</span>
             </span>
           </button>
+          <router-link
+            class="list-cell list-cell--home-tile chevron home-tile-router"
+            to="/participant/face-enroll"
+          >
+            <span class="home-tile__icon" aria-hidden="true">😀</span>
+            <span class="list-cell__stack">
+              <span class="list-cell__title">人脸样本录入</span>
+              <span class="list-cell__meta">参与人脸签到前请先在此保存特征（不留照片）</span>
+            </span>
+          </router-link>
         </div>
       </section>
     </div>

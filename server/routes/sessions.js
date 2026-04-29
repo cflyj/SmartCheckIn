@@ -19,6 +19,7 @@ import {
   appendJoinedUser,
   unionMemberIdsForOrgs,
   userMemberOfAllOrgs,
+  getUserFaceDescriptorArr,
 } from '../db.js'
 import { ok, fail } from '../utils/response.js'
 import { authRequired } from '../middleware/auth.js'
@@ -31,15 +32,38 @@ import {
   getQrState,
 } from '../services/qrToken.js'
 import { extractCheckinTokenFromPayload } from '../utils/qrPayload.js'
+import { descriptorsMatch, parseDescriptorFromBody } from '../services/faceVerify.js'
 
 const router = Router()
 
-function hasGeo(mode) {
+/** 配置了地理围栏中心的模式（含需联合人脸的 GEO_FACE） */
+function hasGeoFenceMode(mode) {
+  return mode === 'GEO' || mode === 'BOTH' || mode === 'GEO_FACE'
+}
+
+/** 允许单独调用 POST /checkin/geo 的模式（不含 GEO_FACE） */
+function allowStandaloneGeoCheckin(mode) {
   return mode === 'GEO' || mode === 'BOTH'
 }
 
 function hasQr(mode) {
   return mode === 'QR' || mode === 'BOTH'
+}
+
+const SESSION_MODE_SET = ['GEO', 'QR', 'BOTH', 'FACE', 'GEO_FACE']
+
+const SESSION_MODE_INVALID_HINT = '签到方式无效（支持 GEO、QR、BOTH、FACE、GEO_FACE）'
+
+/** 前端或代理可能发来带空格 / 大小写不一致的取值 */
+function normalizeCheckinMode(raw) {
+  if (raw === undefined || raw === null) return null
+  const s = typeof raw === 'string' ? raw.trim() : String(raw).trim()
+  if (!s) return null
+  return s.replace(/\s+/g, '_').replace(/-/g, '_').toUpperCase()
+}
+
+function isValidSessionMode(mode) {
+  return typeof mode === 'string' && SESSION_MODE_SET.includes(mode)
 }
 
 function normalizeScope(s) {
@@ -66,6 +90,22 @@ function canAttendSession(row, user) {
 
 function isSessionOwner(row, user) {
   return row.organizer_id === user.id
+}
+
+function matchUserFaceDescriptor(userId, body) {
+  const enrolled = getUserFaceDescriptorArr(userId)
+  if (!enrolled) {
+    return { ok: false, code: 'face_not_enrolled', message: '请先在「人脸录入」页完成采样' }
+  }
+  const probe = parseDescriptorFromBody(body)
+  if (!probe) {
+    return { ok: false, code: 'validation_error', message: '未采集到合法人脸特征，请重试' }
+  }
+  const result = descriptorsMatch(enrolled, probe)
+  if (!result.ok) {
+    return { ok: false, code: 'face_mismatch', message: '与账号已录入人脸不一致，请在良好光线下重试' }
+  }
+  return { ok: true }
 }
 
 function participantListedSession(row, user) {
@@ -231,11 +271,13 @@ router.post('/', (req, res) => {
     roster_org_ids: rosterOrgIdsIn,
   } = req.body || {}
 
-  if (!title || !starts_at || !ends_at || !checkin_modes) {
+  const modesNorm = normalizeCheckinMode(checkin_modes)
+
+  if (!title || !starts_at || !ends_at || !modesNorm) {
     return fail(res, 422, 'validation_error', '请填写标题与时间')
   }
-  if (!['GEO', 'QR', 'BOTH'].includes(checkin_modes)) {
-    return fail(res, 422, 'validation_error', '签到方式须为 GEO、QR 或 BOTH')
+  if (!isValidSessionMode(modesNorm)) {
+    return fail(res, 422, 'validation_error', SESSION_MODE_INVALID_HINT)
   }
 
   const participant_scope = scopeForCreate(scopeIn)
@@ -266,7 +308,7 @@ router.post('/', (req, res) => {
     allowed_user_ids = []
   }
 
-  if (hasGeo(checkin_modes)) {
+  if (hasGeoFenceMode(modesNorm)) {
     const g = geo_config
     if (!g?.center || typeof g.center.lat !== 'number' || typeof g.center.lng !== 'number') {
       return fail(res, 422, 'validation_error', '地理签到需要中心点坐标')
@@ -279,8 +321,8 @@ router.post('/', (req, res) => {
   const id = randomUUID()
   const now = new Date().toISOString()
   const geoJson =
-    hasGeo(checkin_modes) && geo_config ? JSON.stringify(geo_config) : null
-  const qrMerged = hasQr(checkin_modes) ? { ...defaultQrConfig(), ...bodyQr } : null
+    hasGeoFenceMode(modesNorm) && geo_config ? JSON.stringify(geo_config) : null
+  const qrMerged = hasQr(modesNorm) ? { ...defaultQrConfig(), ...bodyQr } : null
   const qrJson = qrMerged ? JSON.stringify(qrMerged) : null
 
   try {
@@ -290,7 +332,7 @@ router.post('/', (req, res) => {
       organizer_id: req.user.id,
       starts_at,
       ends_at,
-      checkin_modes,
+      checkin_modes: modesNorm,
       cancelled: false,
       participant_scope,
       allowed_user_ids,
@@ -301,7 +343,7 @@ router.post('/', (req, res) => {
       created_at: now,
       roster_org_ids,
     })
-    if (hasQr(checkin_modes)) {
+    if (hasQr(modesNorm)) {
       rotateQrForSession(id, qrMerged)
     }
     ok(res, { session: mapSessionDetail(req.user, loadSession(id)) })
@@ -331,9 +373,13 @@ router.put('/:id', (req, res) => {
     roster_org_ids: rosterOrgIdsBody,
   } = req.body || {}
 
-  const modes = checkin_modes || row.checkin_modes
-  if (!['GEO', 'QR', 'BOTH'].includes(modes)) {
-    return fail(res, 422, 'validation_error', '签到方式无效')
+  let modes = row.checkin_modes
+  if (checkin_modes !== undefined && checkin_modes !== null) {
+    const n = normalizeCheckinMode(checkin_modes)
+    if (n != null) modes = n
+  }
+  if (!modes || !isValidSessionMode(modes)) {
+    return fail(res, 422, 'validation_error', SESSION_MODE_INVALID_HINT)
   }
 
   if (scopeIn === 'open') {
@@ -389,7 +435,7 @@ router.put('/:id', (req, res) => {
   if (typeof row.geo_config === 'string') {
     /* keep */
   }
-  if (hasGeo(modes)) {
+  if (hasGeoFenceMode(modes)) {
     if (geo_config) geoJson = JSON.stringify(geo_config)
   } else {
     geoJson = null
@@ -472,8 +518,12 @@ router.post('/:id/checkin/geo', (req, res) => {
   const status = sessionComputedStatus(row)
   if (assertTimeWindow(res, status)) return
 
-  if (!hasGeo(row.checkin_modes)) {
-    return fail(res, 409, 'mode_not_allowed', '该活动未开启地理位置签到')
+  if (!allowStandaloneGeoCheckin(row.checkin_modes)) {
+    const msg =
+      row.checkin_modes === 'GEO_FACE'
+        ? '请使用地理+人脸联合签到（单次提交），勿单独提交地理签到。'
+        : '该活动未开启单独地理位置签到'
+    return fail(res, 409, 'mode_not_allowed', msg)
   }
 
   const geo = parseJsonField(row.geo_config)
@@ -636,6 +686,197 @@ router.post('/:id/checkin/qr', (req, res) => {
   ok(res, { record: formatRecord(created), already_checked_in: false })
 })
 
+/**
+ * Body: { descriptor: number[128] } — 浏览器 face-api FaceRecognitionNet 输出向量
+ */
+router.post('/:id/checkin/face', (req, res) => {
+  const row = loadSession(req.params.id)
+  if (assertSessionAccess(req, res, row)) return
+  if (assertCanCheckIn(req, res, row)) return
+
+  const status = sessionComputedStatus(row)
+  if (assertTimeWindow(res, status)) return
+
+  if (row.checkin_modes !== 'FACE') {
+    const msg =
+      row.checkin_modes === 'GEO_FACE'
+        ? '当前活动为人脸联合签到，请在本页「地理 + 人脸识别」版块一次性提交'
+        : '该活动未开放「仅人脸识别」签到'
+    return fail(res, 409, 'mode_not_allowed', msg)
+  }
+
+  const serverAt = new Date().toISOString()
+  const existing = findSuccessfulCheckin(row.id, req.user.id)
+  if (existing) {
+    return ok(res, { record: formatRecord(existing), already_checked_in: true })
+  }
+
+  const match = matchUserFaceDescriptor(req.user.id, req.body)
+  if (!match.ok) {
+    try {
+      insertCheckinRecord({
+        id: randomUUID(),
+        session_id: row.id,
+        user_id: req.user.id,
+        method: 'face',
+        success: false,
+        failure_code: match.code || 'face_mismatch',
+        client_reported_at: null,
+        server_at: serverAt,
+        latitude: null,
+        longitude: null,
+        accuracy_m: null,
+        raw_meta: null,
+      })
+    } catch (e) {
+      console.error(e)
+    }
+    return fail(res, 422, match.code || 'face_mismatch', match.message || '核验失败')
+  }
+
+  const succId = randomUUID()
+  try {
+    insertCheckinRecord({
+      id: succId,
+      session_id: row.id,
+      user_id: req.user.id,
+      method: 'face',
+      success: true,
+      failure_code: null,
+      client_reported_at: null,
+      server_at: serverAt,
+      latitude: null,
+      longitude: null,
+      accuracy_m: null,
+      raw_meta: null,
+    })
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) {
+      const r = findSuccessfulCheckin(row.id, req.user.id)
+      return ok(res, { record: formatRecord(r), already_checked_in: true })
+    }
+    throw e
+  }
+  ok(res, { record: formatRecord(findCheckinById(succId)), already_checked_in: false })
+})
+
+/** 地理围栏 + 人脸同一请求通过，避免只签地理位置绕过 */
+router.post('/:id/checkin/geo-face', (req, res) => {
+  const row = loadSession(req.params.id)
+  if (assertSessionAccess(req, res, row)) return
+  if (assertCanCheckIn(req, res, row)) return
+
+  const status = sessionComputedStatus(row)
+  if (assertTimeWindow(res, status)) return
+
+  if (row.checkin_modes !== 'GEO_FACE') {
+    const msg =
+      row.checkin_modes === 'FACE'
+        ? '本活动仅需人脸识别，请切换到「人脸识别」签到区'
+        : '该活动不是地理 + 人脸识别联合签到'
+    return fail(res, 409, 'mode_not_allowed', msg)
+  }
+
+  const geo = parseJsonField(row.geo_config)
+  if (!geo?.center) {
+    return fail(res, 422, 'validation_error', '活动未配置地理围栏')
+  }
+
+  const { lat, lng, accuracy_m, client_time } = req.body || {}
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return fail(res, 422, 'validation_error', '请提供有效经纬度')
+  }
+
+  if (geo.min_accuracy_m != null && geo.min_accuracy_m > 0) {
+    if (accuracy_m != null && typeof accuracy_m === 'number' && accuracy_m > geo.min_accuracy_m) {
+      return fail(
+        res,
+        422,
+        'accuracy_too_low',
+        `定位精度约 ${Math.round(accuracy_m)} 米，活动要求不劣于 ${geo.min_accuracy_m} 米。可到室外重试，或请组织者关闭精度限制 / 增大阈值。`
+      )
+    }
+  }
+
+  const serverAt = new Date().toISOString()
+  const existing = findSuccessfulCheckin(row.id, req.user.id)
+  if (existing) {
+    return ok(res, { record: formatRecord(existing), already_checked_in: true })
+  }
+
+  const dist = haversineMeters(lat, lng, geo.center.lat, geo.center.lng)
+
+  if (dist > geo.radius_m) {
+    try {
+      insertCheckinRecord({
+        id: randomUUID(),
+        session_id: row.id,
+        user_id: req.user.id,
+        method: 'geo_face',
+        success: false,
+        failure_code: 'outside_geofence',
+        client_reported_at: client_time || null,
+        server_at: serverAt,
+        latitude: lat,
+        longitude: lng,
+        accuracy_m: accuracy_m ?? null,
+        raw_meta: null,
+      })
+    } catch (e) {
+      console.error(e)
+    }
+    return fail(res, 422, 'outside_geofence', `当前位置超出允许范围（约 ${Math.round(dist)} 米）`)
+  }
+
+  const match = matchUserFaceDescriptor(req.user.id, req.body)
+  if (!match.ok) {
+    try {
+      insertCheckinRecord({
+        id: randomUUID(),
+        session_id: row.id,
+        user_id: req.user.id,
+        method: 'geo_face',
+        success: false,
+        failure_code: match.code || 'face_mismatch',
+        client_reported_at: client_time || null,
+        server_at: serverAt,
+        latitude: lat,
+        longitude: lng,
+        accuracy_m: accuracy_m ?? null,
+        raw_meta: null,
+      })
+    } catch (e) {
+      console.error(e)
+    }
+    return fail(res, 422, match.code || 'face_mismatch', match.message || '人脸核验失败')
+  }
+
+  const succId = randomUUID()
+  try {
+    insertCheckinRecord({
+      id: succId,
+      session_id: row.id,
+      user_id: req.user.id,
+      method: 'geo_face',
+      success: true,
+      failure_code: null,
+      client_reported_at: client_time || null,
+      server_at: serverAt,
+      latitude: lat,
+      longitude: lng,
+      accuracy_m: accuracy_m ?? null,
+      raw_meta: null,
+    })
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) {
+      const r = findSuccessfulCheckin(row.id, req.user.id)
+      return ok(res, { record: formatRecord(r), already_checked_in: true })
+    }
+    throw e
+  }
+  ok(res, { record: formatRecord(findCheckinById(succId)), already_checked_in: false })
+})
+
 router.get('/:id/stats', (req, res) => {
   const row = loadSession(req.params.id)
   if (!row || row.organizer_id !== req.user.id) {
@@ -644,10 +885,12 @@ router.get('/:id/stats', (req, res) => {
 
   const recs = listCheckinsForSession(row.id)
   const successCount = recs.filter((r) => r.success).length
-  const byMethod = { geo: 0, qr: 0 }
+  const byMethod = { geo: 0, qr: 0, face: 0, geo_face: 0 }
   recs.filter((r) => r.success).forEach((r) => {
     if (r.method === 'geo') byMethod.geo += 1
     if (r.method === 'qr') byMethod.qr += 1
+    if (r.method === 'face') byMethod.face += 1
+    if (r.method === 'geo_face') byMethod.geo_face += 1
   })
   const failMap = {}
   recs

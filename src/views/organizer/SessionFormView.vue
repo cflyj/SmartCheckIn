@@ -1,10 +1,16 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '../../api/client.js'
 import { useAuthStore } from '../../stores/auth.js'
 import AppNavBar from '../../components/AppNavBar.vue'
 import { isoToLocalInput, localInputToIso } from '../../utils/date.js'
+import {
+  BUILTIN_LOCATION_PRESETS,
+  addCustomPreset,
+  loadCustomPresets,
+  removeCustomPreset,
+} from '../../utils/locationPresets.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,6 +38,84 @@ const inviteCode = ref('')
 const saving = ref(false)
 const error = ref('')
 const loading = ref(false)
+
+/** 地理围栏预设：内置三项 + 当前用户保存在本地的自定义项 */
+const builtinPresets = BUILTIN_LOCATION_PRESETS
+const customPresets = ref([])
+const presetSelectedId = ref('')
+const newPresetLabel = ref('')
+const presetSaveErr = ref('')
+
+/** 围栏中心来源反馈：让用户明确「当前数字对应哪一种选择」 */
+const geoFenceHint = ref(null)
+/** 程序写入经纬度时避免误标为「手动编辑」 */
+const geoSilentApply = ref(false)
+
+function refreshGeoPresets() {
+  const uid = auth.user?.id
+  customPresets.value = uid ? loadCustomPresets(uid) : []
+}
+
+watch(presetSelectedId, async (id) => {
+  if (!id) return
+  const all = [...builtinPresets, ...customPresets.value]
+  const p = all.find((x) => x.id === id)
+  if (p) {
+    geoSilentApply.value = true
+    lat.value = p.lat
+    lng.value = p.lng
+    geoFenceHint.value = { kind: 'preset', name: p.label }
+    await nextTick()
+    await nextTick()
+    geoSilentApply.value = false
+  }
+  presetSelectedId.value = ''
+})
+
+function onGeoLatLngEdited() {
+  if (geoSilentApply.value) return
+  geoFenceHint.value = { kind: 'manual' }
+}
+
+function saveCurrentLocationAsPreset() {
+  presetSaveErr.value = ''
+  const uid = auth.user?.id
+  if (!uid) {
+    presetSaveErr.value = '请先登录后再保存预设'
+    return
+  }
+  const label = newPresetLabel.value.trim()
+  if (label.length < 1) {
+    presetSaveErr.value = '请填写位置名称'
+    return
+  }
+  if (label.length > 60) {
+    presetSaveErr.value = '名称请控制在 60 字以内'
+    return
+  }
+  const la = Number(lat.value)
+  const lo = Number(lng.value)
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) {
+    presetSaveErr.value = '请先填写合法的纬度、经度后再保存预设'
+    return
+  }
+  try {
+    customPresets.value = addCustomPreset(uid, {
+      label,
+      lat: la,
+      lng: lo,
+    })
+    newPresetLabel.value = ''
+  } catch {
+    presetSaveErr.value = '无法保存预设，请稍后再试'
+  }
+}
+
+function deleteCustomPreset(presetId) {
+  const uid = auth.user?.id
+  if (!uid) return
+  customPresets.value = removeCustomPreset(uid, presetId)
+}
 
 async function loadMyOrgs() {
   try {
@@ -74,6 +158,7 @@ function setRosterUserSelected(uid, checked) {
 }
 
 async function load() {
+  refreshGeoPresets()
   await loadMyOrgs()
   if (!isEdit.value) {
     inviteCode.value = ''
@@ -82,6 +167,7 @@ async function load() {
     rosterSelectedIds.value = []
     rosterLoadErr.value = ''
     needsScopeMigration.value = false
+    geoFenceHint.value = null
     return
   }
   loading.value = true
@@ -102,11 +188,18 @@ async function load() {
     await refreshRosterPool()
     inviteCode.value = ''
 
+    geoSilentApply.value = true
     if (s.geo_config?.center) {
       lat.value = s.geo_config.center.lat
       lng.value = s.geo_config.center.lng
       radiusM.value = s.geo_config.radius_m ?? 250
+      geoFenceHint.value = { kind: 'saved' }
+    } else {
+      geoFenceHint.value = null
     }
+    await nextTick()
+    await nextTick()
+    geoSilentApply.value = false
     if (s.qr_config?.ttl_seconds) qrTtl.value = s.qr_config.ttl_seconds
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '加载失败'
@@ -122,6 +215,13 @@ watch(
   () => [participantScope.value, selectedOrgIds.value.slice().sort().join(',')],
   () => {
     if (participantScope.value === 'roster') refreshRosterPool()
+  }
+)
+
+watch(
+  () => checkinModes.value,
+  (m) => {
+    if (m !== 'GEO' && m !== 'BOTH' && m !== 'GEO_FACE') geoFenceHint.value = null
   }
 )
 
@@ -164,10 +264,15 @@ function useMyLocation() {
     return
   }
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
+    async (pos) => {
+      geoSilentApply.value = true
       lat.value = Math.round(pos.coords.latitude * 1e6) / 1e6
       lng.value = Math.round(pos.coords.longitude * 1e6) / 1e6
       error.value = ''
+      geoFenceHint.value = { kind: 'gps' }
+      await nextTick()
+      await nextTick()
+      geoSilentApply.value = false
     },
     () => {
       error.value = '无法获取当前位置'
@@ -195,7 +300,7 @@ function buildBody() {
       /* validated in save */
     }
   }
-  if (modes === 'GEO' || modes === 'BOTH') {
+  if (modes === 'GEO' || modes === 'BOTH' || modes === 'GEO_FACE') {
     body.geo_config = {
       center: { lat: Number(lat.value), lng: Number(lng.value) },
       radius_m: Number(radiusM.value),
@@ -361,21 +466,128 @@ async function save() {
               <option value="GEO">仅地理位置</option>
               <option value="QR">仅二维码</option>
               <option value="BOTH">地理 + 二维码</option>
+              <option value="FACE">仅人脸识别</option>
+              <option value="GEO_FACE">地理 + 人脸识别</option>
             </select>
+            <p
+              v-if="checkinModes === 'FACE' || checkinModes === 'GEO_FACE'"
+              class="muted text-body-xs u-mt-2 u-mb-0"
+            >
+              <template v-if="checkinModes === 'FACE'">
+                参与者须在首页完成「人脸样本录入」后再签到；系统使用数学特征比对（不存照片原图）。
+              </template>
+              <template v-else>
+                须同时满足「在地理围栏内」与「人脸特征与样本匹配」；参与者需先完成人脸录入，并在活动页<strong>一次提交</strong>定位与人脸采样。
+              </template>
+            </p>
           </div>
 
-          <template v-if="checkinModes === 'GEO' || checkinModes === 'BOTH'">
+          <template v-if="checkinModes === 'GEO' || checkinModes === 'BOTH' || checkinModes === 'GEO_FACE'">
             <p class="muted text-body-sm u-mb-0">地理围栏（仅判断到中心点距离）</p>
+            <div class="field u-mb-3">
+              <label>预设位置</label>
+              <p class="muted text-note u-mt-0">
+                从列表选择可快速填入中心点经纬度。默认三项为校内常见地点的示意坐标，实际发布前请点下方「使用我当前的位置」或手动改为真实签到点。
+              </p>
+              <select v-model="presetSelectedId" class="select input">
+                <option value="">选择预设填入坐标…</option>
+                <optgroup label="默认">
+                  <option v-for="p in builtinPresets" :key="p.id" :value="p.id">{{ p.label }}</option>
+                </optgroup>
+                <optgroup v-if="customPresets.length" label="我保存的">
+                  <option v-for="p in customPresets" :key="p.id" :value="p.id">{{ p.label }}</option>
+                </optgroup>
+              </select>
+            </div>
+            <div
+              v-if="geoFenceHint"
+              class="geo-fence-feedback u-mb-3"
+              :class="[
+                geoFenceHint.kind === 'preset' || geoFenceHint.kind === 'gps'
+                  ? 'geo-fence-feedback--accent'
+                  : 'geo-fence-feedback--neutral',
+              ]"
+              role="status"
+              aria-live="polite"
+            >
+              <template v-if="geoFenceHint.kind === 'preset'">
+                <p class="geo-fence-feedback__badge">已从预设填入</p>
+                <p class="geo-fence-feedback__main">「{{ geoFenceHint.name }}」</p>
+                <p class="geo-fence-feedback__note">
+                  下方纬度、经度已更新为该预设的中心；可微调，或使用「当前位置」覆盖。
+                </p>
+              </template>
+              <template v-else-if="geoFenceHint.kind === 'gps'">
+                <p class="geo-fence-feedback__badge">围栏中心 · 当前定位</p>
+                <p class="geo-fence-feedback__main">已用你的 GPS 经纬度更新中心点。</p>
+                <p class="geo-fence-feedback__note">
+                  若数字与预期不符，请检查浏览器定位权限；也可在下方手动修改。
+                </p>
+              </template>
+              <template v-else-if="geoFenceHint.kind === 'manual'">
+                <p class="geo-fence-feedback__badge">围栏中心 · 手动坐标</p>
+                <p class="geo-fence-feedback__main">正在使用你在下方输入的纬度、经度。</p>
+                <p class="geo-fence-feedback__note">若仍要用预设，请在上方下拉中重新选择一项。</p>
+              </template>
+              <template v-else-if="geoFenceHint.kind === 'saved'">
+                <p class="geo-fence-feedback__badge">围栏中心 · 已保存</p>
+                <p class="geo-fence-feedback__main">以下为该活动当前保存的中心点与半径。</p>
+                <p class="geo-fence-feedback__note">修改坐标后保存即可更新。</p>
+              </template>
+            </div>
+            <div class="field u-mb-3">
+              <label>保存为常用预设</label>
+              <p class="muted text-note u-mt-0">
+                将当前纬度、经度与名称存到本设备，便于下次直接在「我保存的」中选择（仅登录用户，数据存于浏览器本地）。
+              </p>
+              <input
+                v-model="newPresetLabel"
+                class="input"
+                type="text"
+                maxlength="60"
+                placeholder="名称，例如：报告厅 A"
+                autocomplete="off"
+              />
+              <button type="button" class="btn btn-secondary u-mt-2" @click="saveCurrentLocationAsPreset">
+                保存当前坐标为新预设
+              </button>
+              <p v-if="presetSaveErr" class="text-body-xs banner-error banner--tight u-mt-2 u-mb-0">{{ presetSaveErr }}</p>
+              <div v-if="customPresets.length" class="grouped-list u-mt-2">
+                <div
+                  v-for="(p, idx) in customPresets"
+                  :key="p.id"
+                  class="list-cell list-cell--static list-cell--member-row"
+                  :class="{ 'list-cell--borderless': idx === customPresets.length - 1 }"
+                >
+                  <span class="list-cell__title">{{ p.label }}</span>
+                  <button type="button" class="btn btn-secondary btn--inline" @click="deleteCustomPreset(p.id)">
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
             <button type="button" class="btn btn-secondary u-mb-3" @click="useMyLocation">
               使用我当前的位置作为中心
             </button>
             <div class="field">
               <label>纬度</label>
-              <input v-model.number="lat" class="input" type="number" step="any" />
+              <input
+                v-model.number="lat"
+                class="input"
+                type="number"
+                step="any"
+                @input="onGeoLatLngEdited"
+              />
             </div>
             <div class="field">
               <label>经度</label>
-              <input v-model.number="lng" class="input" type="number" step="any" />
+              <input
+                v-model.number="lng"
+                class="input"
+                type="number"
+                step="any"
+                @input="onGeoLatLngEdited"
+              />
             </div>
             <div class="field">
               <label>允许半径（米）</label>

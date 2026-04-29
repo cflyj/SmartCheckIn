@@ -1,10 +1,38 @@
 import { Router } from 'express'
-import { findUserByUsername, getSqlite } from '../db.js'
+import { findUserByUsername, getSqlite, setUserFaceDescriptor, getUserFaceDescriptorArr } from '../db.js'
 import { ok, fail } from '../utils/response.js'
 import { authRequired } from '../middleware/auth.js'
 
 const router = Router()
 const MAX_RESOLVE = 50
+
+router.get('/me/profile', authRequired, (req, res) => {
+  const arr = getUserFaceDescriptorArr(req.user.id)
+  ok(res, { has_face_descriptor: !!arr })
+})
+
+/** 录入 / 覆盖人脸样本（仅存 128 维 descriptor JSON，不存储照片） */
+router.post('/me/face', authRequired, (req, res) => {
+  const d = req.body?.descriptor
+  if (!Array.isArray(d) || d.length !== 128) {
+    return fail(res, 422, 'validation_error', '请提供长度为 128 的人脸特征向量')
+  }
+  const nums = []
+  for (let i = 0; i < d.length; i++) {
+    const n = Number(d[i])
+    if (!Number.isFinite(n)) {
+      return fail(res, 422, 'validation_error', '向量含非法数值')
+    }
+    nums.push(n)
+  }
+  try {
+    setUserFaceDescriptor(req.user.id, nums)
+  } catch (e) {
+    console.error(e)
+    return fail(res, 500, 'server_error', '保存失败')
+  }
+  ok(res, { ok: true })
+})
 
 /** 按登录用户名精确查找一人（用于名单制添加成员，不返回全站用户列表） */
 router.post('/lookup', authRequired, (req, res) => {
