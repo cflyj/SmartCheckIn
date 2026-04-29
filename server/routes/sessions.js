@@ -32,7 +32,11 @@ import {
   getQrState,
 } from '../services/qrToken.js'
 import { extractCheckinTokenFromPayload } from '../utils/qrPayload.js'
-import { descriptorsMatch, parseDescriptorFromBody } from '../services/faceVerify.js'
+import {
+  assertProbeDetectionAcceptable,
+  descriptorsMatch,
+  parseDescriptorFromBody,
+} from '../services/faceVerify.js'
 
 const router = Router()
 
@@ -102,6 +106,10 @@ function matchUserFaceDescriptor(userId, body) {
   const enrolled = getUserFaceDescriptorArr(userId)
   if (!enrolled) {
     return { ok: false, code: 'face_not_enrolled', message: '请先在「人脸录入」页完成采样' }
+  }
+  const scoreCheck = assertProbeDetectionAcceptable(body)
+  if (!scoreCheck.ok) {
+    return { ok: false, code: scoreCheck.code, message: scoreCheck.message }
   }
   const probe = parseDescriptorFromBody(body)
   if (!probe) {
@@ -693,7 +701,8 @@ router.post('/:id/checkin/qr', (req, res) => {
 })
 
 /**
- * Body: { descriptor: number[128] } — 浏览器 face-api FaceRecognitionNet 输出向量
+ * Body: { descriptor: number[128], detection_score?: number }
+ * — 浏览器 face-api FaceRecognitionNet + TinyFace 输出；detection_score 为检测器置信度（可选，见 FACE_VERIFICATION_HARDENING）
  */
 router.post('/:id/checkin/face', (req, res) => {
   const row = loadSession(req.params.id)

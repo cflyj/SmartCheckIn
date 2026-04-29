@@ -2,7 +2,8 @@
 
 **文档版本**：1.0  
 **关联实现**：`/api/users/me/face`、`face_descriptor_audit`、`FACE_ENROLLMENT_*` 环境变量  
-**与 `FACE_CHECKIN_PRD.md` 关系**：原 PR 描述识别能力与技术形态；**本文补齐「身份绑定与治理」**，避免样本被高频替换演变为系统性代签。
+**与 `FACE_CHECKIN_PRD.md` 关系**：原 PR 描述识别能力与技术形态；**本文补齐「身份绑定与治理」**，避免样本被高频替换演变为系统性代签。  
+**与 `FACE_VERIFICATION_HARDENING_PRD.md`**：并行关注 **向量比对误判**（换人仍过）；两条线共同降低代签观感风险。
 
 ---
 

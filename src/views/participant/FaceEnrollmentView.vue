@@ -132,10 +132,20 @@ async function saveSample() {
       err.value =
         shot.error === 'no_face'
           ? '画面中未检测到正脸，请靠近、正对镜头并保持光线充足'
-          : '图像处理失败，请重试'
+          : shot.error === 'low_face_confidence'
+            ? '人像不够清晰或未正对镜头，请调整光线与距离后重试'
+            : '图像处理失败，请重试'
       return
     }
-    await api('/users/me/face', { method: 'POST', body: { descriptor: shot.descriptor } })
+    await api('/users/me/face', {
+      method: 'POST',
+      body: {
+        descriptor: shot.descriptor,
+        ...(typeof shot.detection_score === 'number' && Number.isFinite(shot.detection_score)
+          ? { detection_score: shot.detection_score }
+          : {}),
+      },
+    })
     okMsg.value =
       '已保存。系统只保存数学特征向量，不保存照片原图。你可参与人脸识别类签到活动。（再次更换将受到冷却与活动窗口限制。）'
     stopCam()

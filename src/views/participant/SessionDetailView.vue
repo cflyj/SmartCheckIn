@@ -19,6 +19,14 @@ import {
   buildGeoFeel,
 } from '../../utils/geoFeel.js'
 
+function faceCaptureUserMessage(errCode) {
+  if (errCode === 'no_face') return '未检测到正脸，请正对镜头并保持光线充足'
+  if (errCode === 'low_face_confidence') {
+    return '人像不够清晰或未正对镜头，请调整光线与距离后重试'
+  }
+  return '采样失败'
+}
+
 const route = useRoute()
 const router = useRouter()
 const id = computed(() => route.params.id)
@@ -41,12 +49,14 @@ const hasFaceProfile = ref(false)
 const faceOnlyVideoRef = ref(null)
 let faceOnlyMediaStream = null
 const faceOnlyDescriptor = ref(null)
+const faceOnlyDetectionScore = ref(null)
 const faceOnlyBusy = ref(false)
 
 /** 地理 + 人脸联合 */
 const geoFaceVideoRef = ref(null)
 let geoFaceMediaStream = null
 const geoFaceDescriptor = ref(null)
+const geoFaceDetectionScore = ref(null)
 const geoFaceSnapBusy = ref(false)
 const geoFaceSubmitBusy = ref(false)
 
@@ -197,7 +207,9 @@ async function load() {
       tab.value = 'qr'
     }
     geoFaceDescriptor.value = null
+    geoFaceDetectionScore.value = null
     faceOnlyDescriptor.value = null
+    faceOnlyDetectionScore.value = null
     stopGeoFaceCam()
     stopFaceOnlyCam()
     await refreshFaceProfile()
@@ -457,11 +469,16 @@ async function snapGeoFaceProbe() {
     const shot = await captureFaceDescriptor(geoFaceVideoRef.value)
     if (shot.error) {
       geoFaceDescriptor.value = null
-      geoMsg.value = shot.error === 'no_face' ? '未检测到正脸，请正对镜头并保持光线充足' : '采样失败'
+      geoFaceDetectionScore.value = null
+      geoMsg.value = faceCaptureUserMessage(shot.error)
       geoOk.value = false
       return
     }
     geoFaceDescriptor.value = shot.descriptor
+    geoFaceDetectionScore.value =
+      typeof shot.detection_score === 'number' && Number.isFinite(shot.detection_score)
+        ? shot.detection_score
+        : null
     geoOk.value = false
     geoMsg.value = '已将当前画面采样为人脸特征，可与定位一起提交。也可重新采样替换。'
   } finally {
@@ -490,12 +507,16 @@ async function submitGeoFaceCombined() {
         accuracy_m: clientPos.value.accuracy,
         client_time: new Date().toISOString(),
         descriptor: geoFaceDescriptor.value,
+        ...(geoFaceDetectionScore.value != null && {
+          detection_score: geoFaceDetectionScore.value,
+        }),
       },
     })
     geoOk.value = true
     geoMsg.value = data.already_checked_in ? '你已签到成功' : '地理 + 人脸联合签到成功'
     stopGeoFaceCam()
     geoFaceDescriptor.value = null
+    geoFaceDetectionScore.value = null
   } catch (e) {
     geoMsg.value = e instanceof ApiError ? e.message : '签到失败'
     geoOk.value = false
@@ -545,10 +566,15 @@ async function snapFaceOnlyProbe() {
     const shot = await captureFaceDescriptor(faceOnlyVideoRef.value)
     if (shot.error) {
       faceOnlyDescriptor.value = null
-      faceOnlyMsg.value = shot.error === 'no_face' ? '未检测到正脸，请正对镜头并保持光线充足' : '采样失败'
+      faceOnlyDetectionScore.value = null
+      faceOnlyMsg.value = faceCaptureUserMessage(shot.error)
       return
     }
     faceOnlyDescriptor.value = shot.descriptor
+    faceOnlyDetectionScore.value =
+      typeof shot.detection_score === 'number' && Number.isFinite(shot.detection_score)
+        ? shot.detection_score
+        : null
     faceOnlyMsg.value = '已采样，可点击下方确认人脸识别签到'
   } finally {
     faceOnlySnapBusy.value = false
@@ -566,12 +592,18 @@ async function submitFaceOnly() {
   try {
     const data = await api(`/sessions/${id.value}/checkin/face`, {
       method: 'POST',
-      body: { descriptor: faceOnlyDescriptor.value },
+      body: {
+        descriptor: faceOnlyDescriptor.value,
+        ...(faceOnlyDetectionScore.value != null && {
+          detection_score: faceOnlyDetectionScore.value,
+        }),
+      },
     })
     faceOnlyOk.value = true
     faceOnlyMsg.value = data.already_checked_in ? '你已签到成功' : '人脸识别签到成功'
     stopFaceOnlyCam()
     faceOnlyDescriptor.value = null
+    faceOnlyDetectionScore.value = null
   } catch (e) {
     faceOnlyMsg.value = e instanceof ApiError ? e.message : '签到失败'
   } finally {

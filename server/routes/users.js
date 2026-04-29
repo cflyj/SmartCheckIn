@@ -6,6 +6,7 @@ import {
   buildFaceEnrollmentPolicyPayload,
   getFaceReplacementDenialReason,
 } from '../services/faceEnrollmentPolicy.js'
+import { assertProbeDetectionAcceptable } from '../services/faceVerify.js'
 
 const router = Router()
 const MAX_RESOLVE = 50
@@ -33,6 +34,11 @@ router.post('/me/face', authRequired, (req, res) => {
       return fail(res, 422, 'validation_error', '向量含非法数值')
     }
     nums.push(n)
+  }
+
+  const scoreCheck = assertProbeDetectionAcceptable(req.body)
+  if (!scoreCheck.ok) {
+    return fail(res, 422, scoreCheck.code || 'validation_error', scoreCheck.message || '检测置信度校验失败')
   }
 
   const existing = getUserFaceDescriptorArr(req.user.id)
