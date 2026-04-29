@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../../api/client.js'
-import AppNavBar from '../../components/AppNavBar.vue'
+import AppPageShell from '../../components/AppPageShell.vue'
 
 const router = useRouter()
 const name = ref('')
@@ -52,8 +52,7 @@ function done() {
 </script>
 
 <template>
-  <div class="page">
-    <AppNavBar title="新建组织" @back="router.push({ name: 'orgs' })" />
+  <AppPageShell nav-title="新建组织" @back="router.push({ name: 'orgs' })">
 
     <div class="content stack stack--md">
       <template v-if="!createdInfo">
@@ -107,5 +106,5 @@ function done() {
         <button type="button" class="btn btn-primary" @click="done">完成</button>
       </template>
     </div>
-  </div>
+  </AppPageShell>
 </template>

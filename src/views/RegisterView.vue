@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { ApiError } from '../api/client.js'
+import AppPageShell from '../components/AppPageShell.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -37,7 +38,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="page">
+  <AppPageShell :show-nav="false">
     <div class="content content--auth stack stack--md">
       <h1 class="headline">注册</h1>
       <p class="subhead subhead--flush">注册后可发起自己的签到活动，也可参与他人活动。</p>
@@ -72,5 +73,5 @@ async function submit() {
         <router-link to="/login">去登录</router-link>
       </p>
     </div>
-  </div>
+  </AppPageShell>
 </template>

@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '../../api/client.js'
 import { useAuthStore } from '../../stores/auth.js'
-import AppNavBar from '../../components/AppNavBar.vue'
+import AppPageShell from '../../components/AppPageShell.vue'
 import { isoToLocalInput, localInputToIso } from '../../utils/date.js'
 import {
   BUILTIN_LOCATION_PRESETS,
@@ -221,7 +221,7 @@ watch(
 watch(
   () => checkinModes.value,
   (m) => {
-    if (m !== 'GEO' && m !== 'BOTH' && m !== 'GEO_FACE') geoFenceHint.value = null
+    if (m !== 'GEO' && m !== 'BOTH' && m !== 'GEO_FACE' && m !== 'GEO_QR_FACE') geoFenceHint.value = null
   }
 )
 
@@ -300,13 +300,13 @@ function buildBody() {
       /* validated in save */
     }
   }
-  if (modes === 'GEO' || modes === 'BOTH' || modes === 'GEO_FACE') {
+  if (modes === 'GEO' || modes === 'BOTH' || modes === 'GEO_FACE' || modes === 'GEO_QR_FACE') {
     body.geo_config = {
       center: { lat: Number(lat.value), lng: Number(lng.value) },
       radius_m: Number(radiusM.value),
     }
   }
-  if (modes === 'QR' || modes === 'BOTH') {
+  if (modes === 'QR' || modes === 'BOTH' || modes === 'GEO_QR_FACE') {
     body.qr_config = { ttl_seconds: Number(qrTtl.value) }
   }
   return body
@@ -330,6 +330,12 @@ async function save() {
       return
     }
   }
+  const startsIso = localInputToIso(startsAt.value)
+  const endsIso = localInputToIso(endsAt.value)
+  if (!startsIso || !endsIso) {
+    error.value = '请填写有效的开始与结束时间（若已填写仍失败，请重新选择日期时间）'
+    return
+  }
   saving.value = true
   try {
     if (isEdit.value) {
@@ -347,8 +353,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="page">
-    <AppNavBar :title="isEdit ? '编辑活动' : '新建活动'" @back="router.push({ name: 'organizer' })" />
+  <AppPageShell :nav-title="isEdit ? '编辑活动' : '新建活动'" @back="router.push({ name: 'organizer' })">
 
     <div class="content stack stack--md stack--airy">
       <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
@@ -468,21 +473,25 @@ async function save() {
               <option value="BOTH">地理 + 二维码</option>
               <option value="FACE">仅人脸识别</option>
               <option value="GEO_FACE">地理 + 人脸识别</option>
+              <option value="GEO_QR_FACE">地理 + 二维码 + 人脸识别</option>
             </select>
             <p
-              v-if="checkinModes === 'FACE' || checkinModes === 'GEO_FACE'"
+              v-if="checkinModes === 'FACE' || checkinModes === 'GEO_FACE' || checkinModes === 'GEO_QR_FACE'"
               class="muted text-body-xs u-mt-2 u-mb-0"
             >
               <template v-if="checkinModes === 'FACE'">
                 参与者须在首页完成「人脸样本录入」后再签到；系统使用数学特征比对（不存照片原图）。
               </template>
-              <template v-else>
+              <template v-else-if="checkinModes === 'GEO_FACE'">
                 须同时满足「在地理围栏内」与「人脸特征与样本匹配」；参与者需先完成人脸录入，并在活动页<strong>一次提交</strong>定位与人脸采样。
+              </template>
+              <template v-else>
+                参与者可任选：<strong>地理</strong>、<strong>二维码</strong>或<strong>人脸</strong>其中一种完成签到（仍须事先完成人脸录入方可使用人脸方式）；每种方式至多成功一次。
               </template>
             </p>
           </div>
 
-          <template v-if="checkinModes === 'GEO' || checkinModes === 'BOTH' || checkinModes === 'GEO_FACE'">
+          <template v-if="checkinModes === 'GEO' || checkinModes === 'BOTH' || checkinModes === 'GEO_FACE' || checkinModes === 'GEO_QR_FACE'">
             <p class="muted text-body-sm u-mb-0">地理围栏（仅判断到中心点距离）</p>
             <div class="field u-mb-3">
               <label>预设位置</label>
@@ -596,7 +605,7 @@ async function save() {
             </div>
           </template>
 
-          <template v-if="checkinModes === 'QR' || checkinModes === 'BOTH'">
+          <template v-if="checkinModes === 'QR' || checkinModes === 'BOTH' || checkinModes === 'GEO_QR_FACE'">
             <div class="field">
               <label>二维码刷新间隔（秒）</label>
               <input v-model.number="qrTtl" class="input" type="number" min="15" max="300" />
@@ -636,5 +645,5 @@ async function save() {
         </div>
       </template>
     </div>
-  </div>
+  </AppPageShell>
 </template>

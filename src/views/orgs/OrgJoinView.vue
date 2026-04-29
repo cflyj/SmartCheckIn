@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../../api/client.js'
-import AppNavBar from '../../components/AppNavBar.vue'
+import AppPageShell from '../../components/AppPageShell.vue'
 
 const router = useRouter()
 const code = ref('')
@@ -94,8 +94,7 @@ function backToInput() {
 </script>
 
 <template>
-  <div class="page">
-    <AppNavBar title="加入组织" @back="router.push({ name: 'orgs' })" />
+  <AppPageShell nav-title="加入组织" @back="router.push({ name: 'orgs' })">
 
     <div class="content stack stack--md">
       <p v-if="phase === 'input'" class="muted text-body-xs">
@@ -202,5 +201,5 @@ function backToInput() {
         </template>
       </template>
     </div>
-  </div>
+  </AppPageShell>
 </template>

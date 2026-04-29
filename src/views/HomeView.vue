@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
-import AppNavBar from '../components/AppNavBar.vue'
+import AppPageShell from '../components/AppPageShell.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -54,12 +54,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="page page--home">
-    <AppNavBar title="首页" :show-back="false">
-      <template #right>
+  <AppPageShell
+    page-class="page--home"
+    nav-title="首页"
+    :show-back="false"
+  >
+      <template #nav-right>
         <button type="button" class="nav-bar__action" @click="openLogoutConfirm">退出</button>
       </template>
-    </AppNavBar>
 
     <div class="content stack stack--md">
       <div class="home-hero">
@@ -107,10 +109,10 @@ onUnmounted(() => {
             class="list-cell list-cell--home-tile chevron home-tile-router"
             to="/participant/face-enroll"
           >
-            <span class="home-tile__icon" aria-hidden="true">😀</span>
+            <span class="home-tile__icon home-tile__icon--face" aria-hidden="true">😀</span>
             <span class="list-cell__stack">
               <span class="list-cell__title">人脸样本录入</span>
-              <span class="list-cell__meta">参与人脸签到前请先在此保存特征（不留照片）</span>
+              <span class="list-cell__meta">参与人脸签到前请先在此保存特征</span>
             </span>
           </router-link>
         </div>
@@ -140,7 +142,7 @@ onUnmounted(() => {
         </div>
       </div>
     </Teleport>
-  </div>
+  </AppPageShell>
 </template>
 
 <style scoped>

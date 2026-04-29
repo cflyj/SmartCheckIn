@@ -14,7 +14,9 @@ export function isoToLocalInput(iso) {
 /** local datetime-local to ISO */
 export function localInputToIso(val) {
   if (!val) return null
-  return new Date(val).toISOString()
+  const d = new Date(val)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toISOString()
 }
 
 export function formatLocal(iso) {

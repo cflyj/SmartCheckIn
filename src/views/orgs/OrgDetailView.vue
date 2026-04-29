@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, ApiError } from '../../api/client.js'
+import { api } from '../../api/client.js'
 import { useAuthStore } from '../../stores/auth.js'
-import AppNavBar from '../../components/AppNavBar.vue'
+import AppPageShell from '../../components/AppPageShell.vue'
+import PageFetchState from '../../components/PageFetchState.vue'
+import { apiErrorMessage } from '../../utils/apiHelpers.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,7 +39,7 @@ async function load() {
     rename.value = data.org.name
     joinPolicyDraft.value = data.org.join_policy || 'open'
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '加载失败'
+    error.value = apiErrorMessage(e, '加载失败')
     org.value = null
   } finally {
     loading.value = false
@@ -67,7 +69,7 @@ async function saveRename() {
     await api(`/orgs/${id.value}`, { method: 'PUT', body: { name: rename.value.trim() } })
     await load()
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '保存失败'
+    actionErr.value = apiErrorMessage(e, '保存失败')
   }
 }
 
@@ -77,7 +79,7 @@ async function saveJoinPolicy() {
     await api(`/orgs/${id.value}`, { method: 'PUT', body: { join_policy: joinPolicyDraft.value } })
     await load()
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '保存失败'
+    actionErr.value = apiErrorMessage(e, '保存失败')
   }
 }
 
@@ -95,7 +97,7 @@ async function approveRequest(uid) {
     await api(`/orgs/${id.value}/join-requests/${uid}/approve`, { method: 'POST' })
     await load()
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '操作失败'
+    actionErr.value = apiErrorMessage(e, '操作失败')
   }
 }
 
@@ -106,7 +108,7 @@ async function rejectRequest(uid) {
     await api(`/orgs/${id.value}/join-requests/${uid}/reject`, { method: 'POST' })
     await load()
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '操作失败'
+    actionErr.value = apiErrorMessage(e, '操作失败')
   }
 }
 
@@ -117,7 +119,7 @@ async function regenerateCode() {
     const data = await api(`/orgs/${id.value}/regenerate-code`, { method: 'POST' })
     newCodePlain.value = data.join_code || ''
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '重置失败'
+    actionErr.value = apiErrorMessage(e, '重置失败')
   }
 }
 
@@ -138,7 +140,7 @@ async function runUserLookup() {
     }
   } catch (e) {
     lookupHits.value = []
-    addErr.value = e instanceof ApiError ? e.message : '搜索失败'
+    addErr.value = apiErrorMessage(e, '搜索失败')
   } finally {
     lookupLoading.value = false
   }
@@ -159,7 +161,7 @@ async function addMember() {
     lookupHits.value = []
     await load()
   } catch (e) {
-    addErr.value = e instanceof ApiError ? e.message : '添加失败'
+    addErr.value = apiErrorMessage(e, '添加失败')
   }
 }
 
@@ -170,7 +172,7 @@ async function removeMember(uid) {
     await api(`/orgs/${id.value}/members/${uid}`, { method: 'DELETE' })
     await load()
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '移除失败'
+    actionErr.value = apiErrorMessage(e, '移除失败')
   }
 }
 
@@ -185,7 +187,7 @@ async function leave() {
       router.replace({ name: 'orgs' })
     }
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '退出失败'
+    actionErr.value = apiErrorMessage(e, '退出失败')
   }
 }
 
@@ -198,7 +200,7 @@ async function transfer() {
     transferUserId.value = ''
     await load()
   } catch (e) {
-    actionErr.value = e instanceof ApiError ? e.message : '转让失败'
+    actionErr.value = apiErrorMessage(e, '转让失败')
   }
 }
 
@@ -211,17 +213,11 @@ function canRemove(m) {
 </script>
 
 <template>
-  <div class="page">
-    <AppNavBar :title="org?.name || '组织'" @back="router.push({ name: 'orgs' })" />
+  <AppPageShell :nav-title="org?.name || '组织'" @back="router.push({ name: 'orgs' })">
 
     <div class="content stack stack--md stack--airy">
-      <div v-if="error" class="banner-error">{{ error }}</div>
-      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
-        <span class="loading-spinner" aria-hidden="true" />
-        <span>加载中…</span>
-      </div>
-
-      <template v-else-if="org">
+      <PageFetchState :loading="loading" :error="error">
+      <template v-if="org">
         <div v-if="actionErr" class="banner-error">{{ actionErr }}</div>
 
         <div v-if="newCodePlain" class="card card-pad card--spaced">
@@ -367,6 +363,7 @@ function canRemove(m) {
 
         <button type="button" class="btn btn-secondary" @click="leave">退出组织</button>
       </template>
+      </PageFetchState>
     </div>
-  </div>
+  </AppPageShell>
 </template>

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { ApiError } from '../api/client.js'
+import AppPageShell from '../components/AppPageShell.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -33,7 +34,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="page">
+  <AppPageShell :show-nav="false">
     <div class="content content--auth stack stack--md">
       <div class="login-brand">
         <div class="login-brand__mark" aria-hidden="true">✓</div>
@@ -80,5 +81,5 @@ async function submit() {
         </div>
       </details>
     </div>
-  </div>
+  </AppPageShell>
 </template>

@@ -36,23 +36,29 @@ import { descriptorsMatch, parseDescriptorFromBody } from '../services/faceVerif
 
 const router = Router()
 
-/** 配置了地理围栏中心的模式（含需联合人脸的 GEO_FACE） */
+/** 配置了地理围栏中心的模式（含需联合人脸的 GEO_FACE、三合一 GEO_QR_FACE） */
 function hasGeoFenceMode(mode) {
-  return mode === 'GEO' || mode === 'BOTH' || mode === 'GEO_FACE'
+  return mode === 'GEO' || mode === 'BOTH' || mode === 'GEO_FACE' || mode === 'GEO_QR_FACE'
 }
 
-/** 允许单独调用 POST /checkin/geo 的模式（不含 GEO_FACE） */
+/** 允许单独调用 POST /checkin/geo 的模式（不含 GEO_FACE；GEO_QR_FACE 与 BOTH 一样可单独地理签到） */
 function allowStandaloneGeoCheckin(mode) {
-  return mode === 'GEO' || mode === 'BOTH'
+  return mode === 'GEO' || mode === 'BOTH' || mode === 'GEO_QR_FACE'
 }
 
 function hasQr(mode) {
-  return mode === 'QR' || mode === 'BOTH'
+  return mode === 'QR' || mode === 'BOTH' || mode === 'GEO_QR_FACE'
 }
 
-const SESSION_MODE_SET = ['GEO', 'QR', 'BOTH', 'FACE', 'GEO_FACE']
+/** 允许 POST /checkin/face（仅人脸识别）的模式 */
+function allowsStandaloneFaceCheckin(mode) {
+  return mode === 'FACE' || mode === 'GEO_QR_FACE'
+}
 
-const SESSION_MODE_INVALID_HINT = '签到方式无效（支持 GEO、QR、BOTH、FACE、GEO_FACE）'
+const SESSION_MODE_SET = ['GEO', 'QR', 'BOTH', 'FACE', 'GEO_FACE', 'GEO_QR_FACE']
+
+const SESSION_MODE_INVALID_HINT =
+  '签到方式无效（支持 GEO、QR、BOTH、FACE、GEO_FACE、GEO_QR_FACE）'
 
 /** 前端或代理可能发来带空格 / 大小写不一致的取值 */
 function normalizeCheckinMode(raw) {
@@ -697,11 +703,11 @@ router.post('/:id/checkin/face', (req, res) => {
   const status = sessionComputedStatus(row)
   if (assertTimeWindow(res, status)) return
 
-  if (row.checkin_modes !== 'FACE') {
+  if (!allowsStandaloneFaceCheckin(row.checkin_modes)) {
     const msg =
       row.checkin_modes === 'GEO_FACE'
         ? '当前活动为人脸联合签到，请在本页「地理 + 人脸识别」版块一次性提交'
-        : '该活动未开放「仅人脸识别」签到'
+        : '该活动未开放「仅人脸识别」签到；若为地理+二维码+人脸活动，请到「人脸识别」分页完成签到'
     return fail(res, 409, 'mode_not_allowed', msg)
   }
 
@@ -770,10 +776,14 @@ router.post('/:id/checkin/geo-face', (req, res) => {
   if (assertTimeWindow(res, status)) return
 
   if (row.checkin_modes !== 'GEO_FACE') {
-    const msg =
+    let msg =
       row.checkin_modes === 'FACE'
         ? '本活动仅需人脸识别，请切换到「人脸识别」签到区'
         : '该活动不是地理 + 人脸识别联合签到'
+    if (row.checkin_modes === 'GEO_QR_FACE') {
+      msg =
+        '本活动为三合一签到：请在活动页切换「人脸识别」分页做人脸核验，或对「地理位置」分页做地理签到；此联合接口仅在「地理 + 人脸识别」模式下使用'
+    }
     return fail(res, 409, 'mode_not_allowed', msg)
   }
 

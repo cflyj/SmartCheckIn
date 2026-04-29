@@ -1,9 +1,12 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, ApiError } from '../../api/client.js'
-import AppNavBar from '../../components/AppNavBar.vue'
+import { api } from '../../api/client.js'
+import AppPageShell from '../../components/AppPageShell.vue'
+import PageFetchState from '../../components/PageFetchState.vue'
 import { formatLocal } from '../../utils/date.js'
+import { apiErrorMessage } from '../../utils/apiHelpers.js'
+import { sessionStatusPill } from '../../utils/sessionStatus.js'
 
 const UUID_RE =
   /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i
@@ -17,18 +20,12 @@ function parseSessionId(raw) {
 const router = useRouter()
 const sessions = ref([])
 const loading = ref(true)
-const error = ref('')
+const fetchError = ref('')
 
 const quickJoinId = ref('')
 const quickJoinCode = ref('')
 const quickJoinErr = ref('')
 const quickJoinLoading = ref(false)
-
-function statusPill(s) {
-  const m = { scheduled: 'pill-scheduled', active: 'pill-active', ended: 'pill-ended', cancelled: 'pill-cancelled' }
-  const t = { scheduled: '未开始', active: '进行中', ended: '已结束', cancelled: '已取消' }
-  return { cls: m[s.status] || '', text: t[s.status] || s.status }
-}
 
 function scopeLabel(s) {
   if (s.participant_scope === 'roster') return '仅名单'
@@ -38,12 +35,12 @@ function scopeLabel(s) {
 
 async function loadSessions() {
   loading.value = true
-  error.value = ''
+  fetchError.value = ''
   try {
     const data = await api('/sessions')
     sessions.value = data.sessions || []
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '加载失败'
+    fetchError.value = apiErrorMessage(e, '加载失败')
   } finally {
     loading.value = false
   }
@@ -69,7 +66,7 @@ async function submitQuickJoin() {
     await loadSessions()
     router.push({ name: 'participant-session', params: { id } })
   } catch (e) {
-    quickJoinErr.value = e instanceof ApiError ? e.message : '加入失败'
+    quickJoinErr.value = apiErrorMessage(e, '加入失败')
   } finally {
     quickJoinLoading.value = false
   }
@@ -83,8 +80,7 @@ function open(id) {
 </script>
 
 <template>
-  <div class="page">
-    <AppNavBar title="活动" @back="router.push({ name: 'home' })" />
+  <AppPageShell nav-title="活动" @back="router.push({ name: 'home' })">
 
     <div class="content stack stack--md stack--airy">
       <div class="card card-pad stack">
@@ -116,52 +112,47 @@ function open(id) {
         </button>
       </div>
 
-      <div v-if="error" class="banner-error">{{ error }}</div>
-
-      <div v-if="loading" class="spinner-wrap muted" role="status" aria-live="polite">
-        <span class="loading-spinner" aria-hidden="true" />
-        <span>加载中…</span>
-      </div>
-
-      <template v-else-if="sessions.length">
-        <p class="text-caption u-mb-2">
-          已成功签到的活动带有<strong>绿色「已签到」</strong>标签与<strong>左侧短绿条</strong>（居中、约占行高 90%），可与尚未签到的活动区分。
-        </p>
-        <div class="grouped-list">
-          <button
-            v-for="s in sessions"
-            :key="s.id"
-            type="button"
-            class="list-cell chevron participant-session-list__row-btn"
-            @click="open(s.id)"
-          >
-            <div
-              class="participant-session-list__inner"
-              :class="{ 'participant-session-list__inner--done': s.has_checked_in }"
+      <PageFetchState :loading="loading" :error="fetchError">
+        <template v-if="sessions.length">
+          <p class="text-caption u-mb-2">
+            已成功签到的活动带有<strong>「已签到」</strong>标签与<strong>左侧短竖条</strong>（居中、约占行高 90%），可与尚未签到的活动区分。
+          </p>
+          <div class="grouped-list">
+            <button
+              v-for="s in sessions"
+              :key="s.id"
+              type="button"
+              class="list-cell chevron participant-session-list__row-btn"
+              @click="open(s.id)"
             >
-              <div class="participant-session-list__main">
-                <div class="list-cell__title">{{ s.title }}</div>
+              <div
+                class="participant-session-list__inner"
+                :class="{ 'participant-session-list__inner--done': s.has_checked_in }"
+              >
+                <div class="participant-session-list__main">
+                  <div class="list-cell__title">{{ s.title }}</div>
+                </div>
+                <div class="participant-session-list__tags">
+                  <span v-if="s.has_checked_in" class="pill pill-checked-in">已签到</span>
+                  <span v-if="scopeLabel(s)" class="pill pill-scope">{{ scopeLabel(s) }}</span>
+                  <span :class="['pill', sessionStatusPill(s).cls]">{{ sessionStatusPill(s).text }}</span>
+                </div>
+                <div class="participant-session-list__time muted">
+                  {{ formatLocal(s.starts_at) }} — {{ formatLocal(s.ends_at) }}
+                </div>
               </div>
-              <div class="participant-session-list__tags">
-                <span v-if="s.has_checked_in" class="pill pill-checked-in">已签到</span>
-                <span v-if="scopeLabel(s)" class="pill pill-scope">{{ scopeLabel(s) }}</span>
-                <span :class="['pill', statusPill(s).cls]">{{ statusPill(s).text }}</span>
-              </div>
-              <div class="participant-session-list__time muted">
-                {{ formatLocal(s.starts_at) }} — {{ formatLocal(s.ends_at) }}
-              </div>
-            </div>
-          </button>
-        </div>
-      </template>
+            </button>
+          </div>
+        </template>
 
-      <div v-else class="empty-state" role="status">
-        <div class="empty-state__icon" aria-hidden="true">📋</div>
-        <p class="empty-state__title">暂无活动</p>
-        <p class="empty-state__text">
-          邀请制可在上方填写编号与邀请码加入；名单制需组织者在名单中勾选你。
-        </p>
-      </div>
+        <div v-else class="empty-state" role="status">
+          <div class="empty-state__icon" aria-hidden="true">📋</div>
+          <p class="empty-state__title">暂无活动</p>
+          <p class="empty-state__text">
+            邀请制可在上方填写编号与邀请码加入；名单制需组织者在名单中勾选你。
+          </p>
+        </div>
+      </PageFetchState>
     </div>
-  </div>
+  </AppPageShell>
 </template>

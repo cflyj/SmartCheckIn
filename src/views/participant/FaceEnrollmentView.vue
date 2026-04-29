@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../../api/client.js'
-import AppNavBar from '../../components/AppNavBar.vue'
+import AppPageShell from '../../components/AppPageShell.vue'
 import { captureFaceDescriptor, loadFaceModels } from '../../utils/faceClient.js'
 
 const router = useRouter()
@@ -76,8 +76,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="page">
-    <AppNavBar title="人脸样本录入" @back="router.push({ name: 'home' })" />
+  <AppPageShell nav-title="人脸样本录入" @back="router.push({ name: 'home' })">
 
     <div class="content stack stack--md">
       <p class="muted text-body-sm u-mb-0">
@@ -105,7 +104,7 @@ onUnmounted(() => {
         </div>
       </template>
     </div>
-  </div>
+  </AppPageShell>
 </template>
 
 <style scoped>
