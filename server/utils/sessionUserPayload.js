@@ -9,6 +9,6 @@ export function sessionUserPayload(user) {
     display_name: user.display_name,
     role: user.role,
     account_status: user.account_status || 'active',
-    is_super_admin: userIsSuperAdmin(user.id),
+    is_super_admin: userIsSuperAdmin(user.id, user),
   }
 }

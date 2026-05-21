@@ -77,7 +77,8 @@ onUnmounted(() => {
       <div class="home-tip" role="note">
         <span class="home-tip__lead">提示</span>
         <p class="home-tip__body">
-          任意用户可<strong>发起</strong>或<strong>参与</strong>签到；名单制需先加入<strong>组织</strong>，并在成员中勾选签到对象。
+          名单制活动需先加入<strong>组织</strong>，并在成员中勾选签到对象。
+          登录页请按<strong>学生 / 老师 / 管理员</strong>选择入口；自助注册须填写对应邀请码（学生由老师发放，老师由管理员发放）。
         </p>
       </div>
 

@@ -33,14 +33,15 @@
 
 ### 2.1 谁来当超级管理员
 
-- 部署时在 `.env` 配置 **`SUPER_ADMIN_USER_IDS`**：逗号分隔的用户 **UUID**。仅这些账号在服务端被识别为 `is_super_admin`。
-- 创建方式：先在站内 **正常注册**，将生成账号的 **`id`** 拷入 `.env`**，重启 API** 后生效。
+- **内建账号**：服务端在 **`seedIfEmpty` 完成之后**写入固定 UUID 的用户 **`admin` / `admin123`**（见 `server/config/builtinAdmin.js`）。该 UUID **始终并入**服务端 `is_super_admin` 判定，不要求出现在 `.env` 中。（若用户名 `admin` 已被占用，则不会写入内建行，仅以控制台告警提示。）
+- **扩展**：部署方可在 `.env` 追加 **`SUPER_ADMIN_USER_IDS`**：逗号分隔的更多用户 **UUID**，与内建条目 **取并集**。
+- **自建**：也可先站内 **注册**任一用户，把其 **`id`** 填入 `SUPER_ADMIN_USER_IDS` 并 **重启 API**。
 
 ### 2.2 封号对象保护
 
 以下账号 **不允许被其他超级管理员封号**（防误操作系统账号）：
 
-- `SUPER_ADMIN_USER_IDS` 内全部 id。
+- **`SUPER_ADMIN_USER_IDS`** 中的所有 id，以及 **内建超级管理员** 固定 UUID（`server/config/builtinAdmin.js`）。
 
 可自行解封或通过 DB 纠错（极少数场景）。
 

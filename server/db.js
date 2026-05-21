@@ -3,6 +3,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import bcrypt from 'bcryptjs'
 import { randomUUID } from 'crypto'
+import { BUILTIN_ADMIN_USERNAME, BUILTIN_SUPER_ADMIN_USER_ID } from './config/builtinAdmin.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -21,7 +22,55 @@ export function initDb() {
   migrateBackfillFaceUpdatedFromDescriptor()
   migrateUserAccountModeration()
   migrateAdminAuditLog()
+  migrateRegistrationInvites()
   seedIfEmpty()
+  migrateBuiltinSuperAdmin()
+}
+
+/** 内建管理员 admin / admin123（固定 UUID）；若用户名 admin 已被占用则不插入 */
+function migrateBuiltinSuperAdmin() {
+  const BUILTIN_ADMIN_PASSWORD_PLAIN = 'admin123'
+
+  const byId = findUserById(BUILTIN_SUPER_ADMIN_USER_ID)
+  if (byId) {
+    if (String(byId.username).toLowerCase() !== BUILTIN_ADMIN_USERNAME.toLowerCase()) {
+      console.warn(
+        `[SmartCheckIn] 内置管理员 UUID 已占用但用户名不是 "${BUILTIN_ADMIN_USERNAME}"，请检查数据库 users 表`
+      )
+    }
+    return
+  }
+  if (findUserByUsername(BUILTIN_ADMIN_USERNAME)) {
+    console.warn(
+      `[SmartCheckIn] 无法创建内置管理员：用户名 "${BUILTIN_ADMIN_USERNAME}" 已存在其它账号，请在 .env SUPER_ADMIN_USER_IDS 中改用该用户的 id`
+    )
+    return
+  }
+  const now = new Date().toISOString()
+  insertUser({
+    id: BUILTIN_SUPER_ADMIN_USER_ID,
+    username: BUILTIN_ADMIN_USERNAME,
+    passwordHash: bcrypt.hashSync(BUILTIN_ADMIN_PASSWORD_PLAIN, 10),
+    displayName: '系统管理员',
+    role: 'organizer',
+    createdAt: now,
+  })
+}
+
+/** 学生 / 老师自助注册所需的邀请码（学生码由老师生成，老师码由超级管理员生成） */
+function migrateRegistrationInvites() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS registration_invites (
+      id TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      target_role TEXT NOT NULL CHECK (target_role IN ('participant', 'organizer')),
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      remaining_uses INTEGER NOT NULL DEFAULT 1 CHECK (remaining_uses >= 0),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_reg_inv_role_remaining ON registration_invites(target_role, remaining_uses)`)
 }
 
 function migrateUserFaceDescriptor() {
@@ -358,6 +407,58 @@ export function insertUser({ id, username, passwordHash, displayName, role, crea
        VALUES (?, ?, ?, ?, ?, ?, 'active')`
     )
     .run(id, username, passwordHash, displayName, role, createdAt)
+}
+
+/** @param {{ id: string, codeHash: string, targetRole: 'participant'|'organizer', createdBy: string, createdAt: string, remainingUses: number }} row */
+export function insertRegistrationInvite(row) {
+  getSqlite()
+    .prepare(
+      `INSERT INTO registration_invites (id, code_hash, target_role, created_by, created_at, remaining_uses)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(row.id, row.codeHash, row.targetRole, row.createdBy, row.createdAt, row.remainingUses)
+}
+
+/**
+ * 校验并消耗一条邀请码（同一调用内在 IMMEDIATE 事务中完成，避免并发超额扣减）。
+ * @param {string} plainCode
+ * @param {'participant'|'organizer'} targetRole
+ */
+export function tryConsumeRegistrationInvite(plainCode, targetRole) {
+  const sqlite = getSqlite()
+  const trim = typeof plainCode === 'string' ? plainCode.trim() : ''
+  if (!trim) return false
+
+  sqlite.exec('BEGIN IMMEDIATE')
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT id, code_hash FROM registration_invites WHERE target_role = ? AND remaining_uses > 0`
+      )
+      .all(targetRole)
+    for (const row of rows) {
+      if (bcrypt.compareSync(trim, row.code_hash)) {
+        const r = sqlite
+          .prepare(
+            `UPDATE registration_invites SET remaining_uses = remaining_uses - 1 WHERE id = ? AND remaining_uses > 0`
+          )
+          .run(row.id)
+        if (r.changes === 1) {
+          sqlite.exec('COMMIT')
+          return true
+        }
+      }
+    }
+    sqlite.exec('COMMIT')
+    return false
+  } catch (e) {
+    try {
+      sqlite.exec('ROLLBACK')
+    } catch {
+      /* */
+    }
+    throw e
+  }
 }
 
 export function listAllSessionsRaw() {
@@ -869,4 +970,13 @@ function seedIfEmpty() {
   addOrganizationMember(demoOrgId, organizerUserId, 'owner', now)
   addOrganizationMember(demoOrgId, aliceId, 'member', now)
   addOrganizationMember(demoOrgId, bobId, 'member', now)
+
+  insertRegistrationInvite({
+    id: randomUUID(),
+    codeHash: bcrypt.hashSync('STUDENTDEMO', 10),
+    targetRole: 'participant',
+    createdBy: organizerUserId,
+    createdAt: now,
+    remainingUses: 80,
+  })
 }

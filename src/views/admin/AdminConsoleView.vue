@@ -23,6 +23,9 @@ const booting = ref(true)
 const sectionBusy = ref(false)
 
 const overview = ref({ users: 0, organizations: 0, sessions: 0 })
+const teacherInviteLoading = ref(false)
+const teacherInvitePlain = ref('')
+const teacherInviteUsesDraft = ref('1')
 const orgs = ref([])
 const orgSearchDraft = ref('')
 
@@ -138,6 +141,31 @@ async function copyText(text, label = '内容') {
     }
   }
   closeFeedback()
+}
+
+async function createTeacherRegistrationInvite() {
+  teacherInvitePlain.value = ''
+  closeFeedback()
+  let uses = parseInt(String(teacherInviteUsesDraft.value), 10)
+  if (!Number.isFinite(uses) || uses < 1) uses = 1
+  if (uses > 500) uses = 500
+  teacherInviteUsesDraft.value = String(uses)
+  teacherInviteLoading.value = true
+  try {
+    const data = await api('/registration-invites', {
+      method: 'POST',
+      body: { remaining_uses: uses },
+    })
+    teacherInvitePlain.value = data.code || ''
+  } catch (e) {
+    openFeedback(
+      '生成失败',
+      e instanceof ApiError ? e.message : '请稍后重试',
+      'error'
+    )
+  } finally {
+    teacherInviteLoading.value = false
+  }
 }
 
 async function loadOverviewOnly() {
@@ -436,6 +464,53 @@ onMounted(async () => {
             <div class="admin-stat card card-pad">
               <span class="admin-stat__value">{{ overview.sessions }}</span>
               <span class="muted">活动会话总数</span>
+            </div>
+          </div>
+
+          <div class="card card-pad stack stack--sm u-mt-3">
+            <h3 class="list-cell__title u-mb-0">老师注册邀请码</h3>
+            <p class="muted text-body-sm u-mb-0">
+              发给需要<strong>自助注册为老师</strong>的用户；对方须在登录页选择「老师入口」并在注册页选择「老师」身份。
+            </p>
+            <div class="admin-toolbar__row u-mt-2">
+              <label class="admin-field-label" for="teacher-inv-uses">可用次数（1～500）</label>
+              <div class="admin-toolbar__inputs">
+                <input
+                  id="teacher-inv-uses"
+                  v-model="teacherInviteUsesDraft"
+                  type="number"
+                  min="1"
+                  max="500"
+                  class="input"
+                  style="max-width: 8rem"
+                />
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="teacherInviteLoading"
+                  @click="createTeacherRegistrationInvite"
+                >
+                  {{ teacherInviteLoading ? '生成中…' : '生成邀请码' }}
+                </button>
+                <button
+                  v-if="teacherInvitePlain"
+                  type="button"
+                  class="btn btn-secondary"
+                  @click="copyText(teacherInvitePlain, '老师邀请码')"
+                >
+                  复制
+                </button>
+              </div>
+            </div>
+            <div v-if="teacherInvitePlain" class="field field--flush u-mb-0">
+              <label class="admin-field-label" for="teacher-inv-plain">明文邀请码（仅此一次完整展示）</label>
+              <input
+                id="teacher-inv-plain"
+                class="input"
+                readonly
+                :value="teacherInvitePlain"
+                @focus="$event.target.select()"
+              />
             </div>
           </div>
         </section>
